@@ -6,12 +6,24 @@ import '../types/index.js';
 const router = Router();
 
 router.get('/login', (req, res) => {
-  const client = getOIDCClient();
-  const authUrl = client.authorizationUrl({
-    scope: 'openid email profile',
-    state: 'random_state_string',
-  });
-  res.json({ authUrl });
+  try {
+    const client = getOIDCClient();
+    let authUrl = client.authorizationUrl({
+      scope: 'openid email profile',
+      state: 'random_state_string',
+    });
+
+    // Rewrite internal Docker URLs to public domain
+    authUrl = authUrl.replace('http://authentik-server:9000', env.FRONTEND_URL);
+    authUrl = authUrl.replace('http://localhost:9902', env.FRONTEND_URL);
+
+    res.json({ authUrl });
+  } catch (error) {
+    res.status(503).json({
+      error: 'Authentication service not configured',
+      message: 'Please configure Authentik OIDC application'
+    });
+  }
 });
 
 router.get('/callback', async (req, res) => {
@@ -30,6 +42,14 @@ router.get('/callback', async (req, res) => {
       email: userData.email,
       username: userData.username,
     };
+
+    // CRITICAL: Save session before redirecting to ensure session is persisted
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
 
     res.redirect(`${env.FRONTEND_URL}/dashboard`);
   } catch (error) {

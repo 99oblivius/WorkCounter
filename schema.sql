@@ -1,5 +1,3 @@
-CREATE DATABASE authentik;
-
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
@@ -59,7 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_timeline_entries_session_id ON timeline_entries(t
 CREATE INDEX IF NOT EXISTS idx_timeline_entries_work_id ON timeline_entries(work_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_entries_user_id ON timeline_entries(user_id);
 
--- Trigger to update updated_at on users
+-- Trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN

@@ -6,22 +6,42 @@ import '../types/index.js';
 
 let oidcClient: Client;
 
-export async function initializeOIDC() {
-  try {
-    const issuer = await Issuer.discover(`${env.AUTHENTIK_URL}/application/o/workcounter/.well-known/openid-configuration`);
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-    oidcClient = new issuer.Client({
-      client_id: env.AUTHENTIK_CLIENT_ID,
-      client_secret: env.AUTHENTIK_CLIENT_SECRET,
-      redirect_uris: [`${env.BACKEND_URL}/api/auth/callback`],
-      response_types: ['code'],
-    });
+export async function initializeOIDC(maxRetries = 10, initialDelay = 2000) {
+  let lastError: Error | undefined;
 
-    console.log('OIDC client initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize OIDC client:', error);
-    throw error;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`Attempting to initialize OIDC client (attempt ${attempt}/${maxRetries})...`);
+
+      const issuer = await Issuer.discover(`${env.AUTHENTIK_URL}/application/o/workcounter/.well-known/openid-configuration`);
+
+      oidcClient = new issuer.Client({
+        client_id: env.AUTHENTIK_CLIENT_ID,
+        client_secret: env.AUTHENTIK_CLIENT_SECRET,
+        redirect_uris: [`${env.BACKEND_URL}/api/auth/callback`],
+        response_types: ['code'],
+      });
+
+      console.log('OIDC client initialized successfully');
+      return;
+    } catch (error) {
+      lastError = error as Error;
+      console.warn(`Failed to initialize OIDC client (attempt ${attempt}/${maxRetries}):`, error);
+
+      if (attempt < maxRetries) {
+        const delay = initialDelay * Math.pow(1.5, attempt - 1);
+        console.log(`Waiting ${delay}ms before retry...`);
+        await sleep(delay);
+      }
+    }
   }
+
+  console.error('Failed to initialize OIDC client after all retries:', lastError);
+  throw lastError;
 }
 
 export function getOIDCClient(): Client {

@@ -11,6 +11,8 @@ const envSchema = z.object({
   DB_NAME: z.string(),
   DB_USER: z.string(),
   DB_PASSWORD: z.string(),
+  REDIS_HOST: z.string().default('redis'),
+  REDIS_PORT: z.string().transform(Number).default('6379'),
   SESSION_SECRET: z.string().min(32),
   AUTHENTIK_URL: z.string().url(),
   AUTHENTIK_CLIENT_ID: z.string(),
