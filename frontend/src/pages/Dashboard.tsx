@@ -54,8 +54,9 @@ export default function Dashboard() {
 
   const logoutMutation = useMutation({
     mutationFn: () => authApi.logout(),
-    onSuccess: () => {
-      window.location.href = '/login';
+    onSuccess: (response) => {
+      // Redirect to Authentik logout endpoint, which will then redirect back to frontend
+      window.location.href = response.data.logoutUrl || '/login';
     },
   });
 

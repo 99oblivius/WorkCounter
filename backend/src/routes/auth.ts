@@ -59,12 +59,50 @@ router.get('/callback', async (req, res) => {
 });
 
 router.post('/logout', (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      return res.status(500).json({ error: 'Logout failed' });
-    }
-    res.json({ success: true });
-  });
+  try {
+    const client = getOIDCClient();
+
+    // Get Authentik's end session endpoint
+    const endSessionEndpoint = client.issuer.metadata.end_session_endpoint;
+
+    // Destroy backend session
+    req.session.destroy((err) => {
+      if (err) {
+        console.error('Session destroy error:', err);
+        return res.status(500).json({ error: 'Logout failed' });
+      }
+
+      // Return Authentik logout URL for frontend to redirect to
+      if (endSessionEndpoint) {
+        const logoutUrl = `${endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(env.FRONTEND_URL)}`;
+
+        // Rewrite internal Docker URLs to public domain
+        const publicLogoutUrl = logoutUrl.replace('http://authentik-server:9000', env.FRONTEND_URL);
+
+        res.json({
+          success: true,
+          logoutUrl: publicLogoutUrl
+        });
+      } else {
+        // Fallback if no end_session_endpoint
+        res.json({
+          success: true,
+          logoutUrl: `${env.FRONTEND_URL}/login`
+        });
+      }
+    });
+  } catch (error) {
+    // If OIDC client not available, just destroy session
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ error: 'Logout failed' });
+      }
+      res.json({
+        success: true,
+        logoutUrl: `${env.FRONTEND_URL}/login`
+      });
+    });
+  }
 });
 
 router.get('/me', (req, res) => {
