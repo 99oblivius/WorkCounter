@@ -36,7 +36,7 @@ export default function Dashboard() {
     refetchInterval: 5000,
   });
 
-  const elapsed = useTimer(runningSession);
+  const elapsed = useTimer(runningSession ?? null);
 
   const startMutation = useMutation({
     mutationFn: (workId: number) => sessionsApi.start(workId),

@@ -41,9 +41,9 @@ export const timelineApi = {
   getByWorkId: (workId: number) =>
     api.get<TimelineEntry[]>(`/timeline/work/${workId}`),
   getById: (id: number) => api.get<TimelineEntry>(`/timeline/${id}`),
-  create: (data: Partial<TimelineEntry> & { timeSessionId: number; workId: number; timestamp: string; label: string }) =>
+  create: (data: { timeSessionId: number; workId: number; timestamp: string; label: string; activityType?: string }) =>
     api.post<TimelineEntry>('/timeline', data),
-  update: (id: number, data: Partial<TimelineEntry>) =>
+  update: (id: number, data: { timestamp?: string; label?: string; activityType?: string }) =>
     api.patch<TimelineEntry>(`/timeline/${id}`, data),
   delete: (id: number) => api.delete(`/timeline/${id}`),
 };
