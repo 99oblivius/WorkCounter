@@ -288,18 +288,44 @@ server {
 6. Enable Authentik's 2FA for admin accounts
 7. Regular database backups
 
+### Data Storage
+
+All persistent data is stored in the `./data/` directory relative to the docker-compose.yml file:
+
+- `./data/postgres/` - PostgreSQL database
+- `./data/redis/` - Redis persistence
+- `./data/authentik/media/` - Authentik media files
+- `./data/authentik/templates/` - Custom templates
+- `./data/authentik/certs/` - SSL certificates
+
+This directory is automatically created by Docker on first run and is excluded from git.
+
 ### Backups
 
-PostgreSQL data is stored in Docker volumes. To backup:
+**Database backup using pg_dump:**
 
 ```bash
 docker compose exec postgres pg_dump -U workcounter workcounter > backup.sql
 ```
 
-To restore:
+**Database restore:**
 
 ```bash
 cat backup.sql | docker compose exec -T postgres psql -U workcounter workcounter
+```
+
+**Full data backup:**
+
+Simply backup the entire `./data/` directory:
+
+```bash
+tar -czf workcounter-backup-$(date +%Y%m%d).tar.gz data/
+```
+
+**Restore from full backup:**
+
+```bash
+tar -xzf workcounter-backup-YYYYMMDD.tar.gz
 ```
 
 ## Troubleshooting

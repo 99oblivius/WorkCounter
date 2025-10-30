@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     networks:
       - workcounter-network
@@ -24,7 +24,7 @@ services:
     container_name: workcounter-redis
     command: --save 60 1 --loglevel warning
     volumes:
-      - redis_data:/data
+      - ./data/redis:/data
     networks:
       - workcounter-network
     healthcheck:
@@ -50,8 +50,8 @@ services:
     ports:
       - "${AUTHENTIK_PORT}:9000"
     volumes:
-      - authentik_media:/media
-      - authentik_templates:/templates
+      - ./data/authentik/media:/media
+      - ./data/authentik/templates:/templates
     networks:
       - workcounter-network
     depends_on:
@@ -74,9 +74,9 @@ services:
       AUTHENTIK_ERROR_REPORTING__ENABLED: false
       AUTHENTIK_DISABLE_STARTUP_ANALYTICS: true
     volumes:
-      - authentik_media:/media
-      - authentik_templates:/templates
-      - authentik_certs:/certs
+      - ./data/authentik/media:/media
+      - ./data/authentik/templates:/templates
+      - ./data/authentik/certs:/certs
     networks:
       - workcounter-network
     depends_on:
@@ -134,10 +134,3 @@ services:
 networks:
   workcounter-network:
     driver: bridge
-
-volumes:
-  postgres_data:
-  redis_data:
-  authentik_media:
-  authentik_templates:
-  authentik_certs:
