@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { WorkModel } from '../models/Work.js';
+import '../types/index.js';
 
 const router = Router();
 

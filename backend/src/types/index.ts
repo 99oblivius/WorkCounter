@@ -44,7 +44,7 @@ export interface TimelineEntry {
   updated_at: Date;
 }
 
-export interface SessionData {
+export interface UserSessionData {
   userId: number;
   authentikId: string;
   email: string;
@@ -53,6 +53,6 @@ export interface SessionData {
 
 declare module 'express-session' {
   interface SessionData {
-    user?: SessionData;
+    user?: UserSessionData;
   }
 }

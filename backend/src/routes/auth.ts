@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getOIDCClient, handleAuthCallback } from '../middleware/auth.js';
 import { env } from '../config/env.js';
+import '../types/index.js';
 
 const router = Router();
 
@@ -25,7 +26,7 @@ router.get('/callback', async (req, res) => {
 
     req.session.user = {
       userId: userData.userId,
-      authentikId: '',
+      authentikId: userData.authentikId,
       email: userData.email,
       username: userData.username,
     };

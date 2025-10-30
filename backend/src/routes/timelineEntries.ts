@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { TimelineEntryModel } from '../models/TimelineEntry.js';
 import { TimeSessionModel } from '../models/TimeSession.js';
+import '../types/index.js';
 
 const router = Router();
 

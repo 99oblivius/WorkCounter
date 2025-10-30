@@ -6,6 +6,7 @@ import { env } from './config/env.js';
 import { pool } from './config/database.js';
 import { initializeOIDC } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import './types/index.js';
 
 import authRoutes from './routes/auth.js';
 import worksRoutes from './routes/works.js';

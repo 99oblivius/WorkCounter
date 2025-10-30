@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { Issuer, Client, TokenSet } from 'openid-client';
 import { env } from '../config/env.js';
 import { UserModel } from '../models/User.js';
+import '../types/index.js';
 
 let oidcClient: Client;
 
@@ -40,7 +41,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 export async function handleAuthCallback(
   code: string,
   redirectUri: string
-): Promise<{ userId: number; email: string; username: string }> {
+): Promise<{ userId: number; authentikId: string; email: string; username: string }> {
   const client = getOIDCClient();
 
   const tokenSet: TokenSet = await client.callback(redirectUri, { code });
@@ -64,6 +65,7 @@ export async function handleAuthCallback(
 
   return {
     userId: user.id,
+    authentikId: user.authentik_id,
     email: user.email,
     username: user.username,
   };
