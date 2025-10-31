@@ -157,25 +157,27 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {works.map((work: Work) => (
-            <div key={work.id} className="card hover:bg-dark-hover cursor-pointer transition-colors">
-              <div onClick={() => navigate(`/work/${work.id}`)}>
-                <h3 className="text-lg font-semibold text-gray-100 mb-2">{work.title}</h3>
-                {work.client_name && (
-                  <p className="text-sm text-gray-400 mb-2">Client: {work.client_name}</p>
-                )}
-                {work.description && (
-                  <p className="text-sm text-gray-500 mb-3 line-clamp-2">{work.description}</p>
-                )}
-                {work.tags && work.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {work.tags.map((tag, i) => (
-                      <span key={i} className="text-xs bg-dark-border px-2 py-1 rounded text-gray-400">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+            <div
+              key={work.id}
+              className="card hover:bg-dark-hover cursor-pointer transition-colors"
+              onClick={() => navigate(`/work/${work.id}`)}
+            >
+              <h3 className="text-lg font-semibold text-gray-100 mb-2">{work.title}</h3>
+              {work.client_name && (
+                <p className="text-sm text-gray-400 mb-2">Client: {work.client_name}</p>
+              )}
+              {work.description && (
+                <p className="text-sm text-gray-500 mb-3 line-clamp-2">{work.description}</p>
+              )}
+              {work.tags && work.tags.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {work.tags.map((tag, i) => (
+                    <span key={i} className="text-xs bg-dark-border px-2 py-1 rounded text-gray-400">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="flex justify-between items-center mt-4 pt-4 border-t border-dark-border">
                 <span className="text-xs text-gray-500 capitalize">{work.status}</span>
                 <button

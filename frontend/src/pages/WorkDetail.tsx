@@ -317,7 +317,37 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 flex-shrink-0">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 flex-shrink-0">
+          <div className="card">
+            <div className="flex items-center space-x-3 mb-2">
+              <Play className="text-purple-500" size={20} />
+              <span className="text-sm text-gray-400">Timer</span>
+            </div>
+            {runningSession ? (
+              <div className="space-y-2">
+                <p className="text-2xl font-mono font-bold text-gray-100">
+                  {formatDuration(elapsed)}
+                </p>
+                <button
+                  onClick={handleStopTimer}
+                  className="btn btn-danger btn-sm flex items-center space-x-2 w-full justify-center"
+                >
+                  <Pause size={14} />
+                  <span>Stop</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleStartTimer}
+                disabled={startMutation.isPending}
+                className="btn btn-primary btn-sm flex items-center space-x-2 w-full justify-center mt-2"
+              >
+                <Play size={14} />
+                <span>Start</span>
+              </button>
+            )}
+          </div>
+
           <div className="card">
             <div className="flex items-center space-x-3 mb-2">
               <Clock className="text-blue-500" size={20} />
@@ -352,35 +382,6 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               <span className="text-sm text-gray-400">Sessions</span>
             </div>
             <p className="text-2xl font-bold text-gray-100">{sessions.length}</p>
-          </div>
-        </div>
-
-        <div className="card mb-6 flex-shrink-0">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-gray-100">Timer</h2>
-            {runningSession ? (
-              <div className="flex items-center space-x-4">
-                <span className="text-2xl font-mono text-gray-100">
-                  {formatDuration(elapsed)}
-                </span>
-                <button
-                  onClick={handleStopTimer}
-                  className="btn btn-danger flex items-center space-x-2"
-                >
-                  <Pause size={16} />
-                  <span>Stop</span>
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={handleStartTimer}
-                disabled={startMutation.isPending}
-                className="btn btn-primary flex items-center space-x-2"
-              >
-                <Play size={16} />
-                <span>Start Timer</span>
-              </button>
-            )}
           </div>
         </div>
 

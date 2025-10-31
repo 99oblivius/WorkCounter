@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { worksApi } from '../services/api';
@@ -18,6 +18,19 @@ export default function WorkForm({ work, onClose, onSuccess }: WorkFormProps) {
     hourlyRate: work?.hourly_rate?.toString() || '',
     tags: work?.tags?.join(', ') || '',
   });
+
+  // Update form data when work prop changes
+  useEffect(() => {
+    if (work) {
+      setFormData({
+        title: work.title || '',
+        description: work.description || '',
+        clientName: work.client_name || '',
+        hourlyRate: work.hourly_rate?.toString() || '',
+        tags: work.tags?.join(', ') || '',
+      });
+    }
+  }, [work]);
 
   const mutation = useMutation({
     mutationFn: async (data: typeof formData) => {

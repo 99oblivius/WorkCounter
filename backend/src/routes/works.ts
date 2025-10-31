@@ -82,7 +82,16 @@ router.patch('/:id', async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
     const data = updateWorkSchema.parse(req.body);
 
-    const work = await WorkModel.update(id, userId, data);
+    // Convert camelCase to snake_case for database
+    const updateData: any = {};
+    if (data.title !== undefined) updateData.title = data.title;
+    if (data.description !== undefined) updateData.description = data.description;
+    if (data.clientName !== undefined) updateData.client_name = data.clientName;
+    if (data.hourlyRate !== undefined) updateData.hourly_rate = data.hourlyRate;
+    if (data.status !== undefined) updateData.status = data.status;
+    if (data.tags !== undefined) updateData.tags = data.tags;
+
+    const work = await WorkModel.update(id, userId, updateData);
 
     if (!work) {
       return res.status(404).json({ error: 'Work not found' });
