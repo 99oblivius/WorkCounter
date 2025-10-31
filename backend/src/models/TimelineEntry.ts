@@ -57,7 +57,7 @@ export class TimelineEntryModel {
   static async update(
     id: number,
     userId: number,
-    data: Partial<Pick<TimelineEntry, 'timestamp' | 'label' | 'activity_type'>>
+    data: Partial<Pick<TimelineEntry, 'timestamp' | 'label'>> & { activity_type?: string | null }
   ): Promise<TimelineEntry> {
     const fields: string[] = [];
     const values: any[] = [];

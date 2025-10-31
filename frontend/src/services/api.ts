@@ -43,7 +43,7 @@ export const timelineApi = {
   getById: (id: number) => api.get<TimelineEntry>(`/timeline/${id}`),
   create: (data: { timeSessionId: number; workId: number; timestamp: string; label: string; activityType?: string }) =>
     api.post<TimelineEntry>('/timeline', data),
-  update: (id: number, data: { timestamp?: string; label?: string; activityType?: string }) =>
+  update: (id: number, data: { timestamp?: string; label?: string; activityType?: string | null }) =>
     api.patch<TimelineEntry>(`/timeline/${id}`, data),
   delete: (id: number) => api.delete(`/timeline/${id}`),
 };

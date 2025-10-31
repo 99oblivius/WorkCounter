@@ -47,4 +47,13 @@
   .input {
     @apply px-3 py-2 rounded-md w-full;
   }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }

@@ -18,7 +18,7 @@ const createEntrySchema = z.object({
 const updateEntrySchema = z.object({
   timestamp: z.string().datetime().optional(),
   label: z.string().min(1).optional(),
-  activityType: z.string().optional(),
+  activityType: z.string().nullable().optional(),
 });
 
 router.use(requireAuth);
