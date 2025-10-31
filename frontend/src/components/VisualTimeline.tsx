@@ -47,18 +47,11 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
     return () => clearInterval(interval);
   }, [runningSession]);
 
-  // Auto-scroll to bottom when new entries are added (and a session is running)
-  useEffect(() => {
-    if (runningSession && timelineRef.current) {
-      timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
-    }
-  }, [entries.length, runningSession]);
-
-  // Scroll to specific session when clicked
+  // Scroll to specific session when clicked (scroll to session end at top)
   useEffect(() => {
     if (scrollToSessionId && sessionRefs.current.has(scrollToSessionId)) {
       const element = sessionRefs.current.get(scrollToSessionId);
-      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [scrollToSessionId]);
 
@@ -165,9 +158,6 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
             return (
               <div
                 key={`session-start-${item.session.id}`}
-                ref={(el) => {
-                  if (el) sessionRefs.current.set(item.session.id, el);
-                }}
                 className="relative mb-6"
               >
                 {/* Line connecting down to next item */}
@@ -207,7 +197,7 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                   <div className="ml-12 flex-1">
                     <div className="bg-dark-surface border border-dark-border rounded-lg p-3 hover:border-gray-600 transition-colors relative">
                       {/* Edit/Delete buttons - absolutely positioned */}
-                      <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                      <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                         {onEditEntry && (
                           <button
                             onClick={() => onEditEntry(item.entry)}
@@ -254,7 +244,13 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
             const duration = item.session.duration_ms || 0;
 
             return (
-              <div key={`session-end-${item.session.id}`} className="relative mb-6">
+              <div
+                key={`session-end-${item.session.id}`}
+                ref={(el) => {
+                  if (el) sessionRefs.current.set(item.session.id, el);
+                }}
+                className="relative mb-6"
+              >
                 {/* Line connecting down to next item */}
                 {shouldDrawLineDown && (
                   <div className="absolute left-6 top-[0.625rem] -bottom-6 w-0.5 bg-dark-border -translate-x-1/2" />
