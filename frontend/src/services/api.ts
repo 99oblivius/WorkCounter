@@ -41,11 +41,28 @@ export const timelineApi = {
   getByWorkId: (workId: number) =>
     api.get<TimelineEntry[]>(`/timeline/work/${workId}`),
   getById: (id: number) => api.get<TimelineEntry>(`/timeline/${id}`),
-  create: (data: { timeSessionId: number; workId: number; timestamp: string; label: string; activityType?: string }) =>
+  create: (data: { timeSessionId: number; workId: number; timestamp: string; label?: string; activityType?: string }) =>
     api.post<TimelineEntry>('/timeline', data),
   update: (id: number, data: { timestamp?: string; label?: string; activityType?: string | null }) =>
     api.patch<TimelineEntry>(`/timeline/${id}`, data),
   delete: (id: number) => api.delete(`/timeline/${id}`),
+  uploadImages: (entryId: number, files: File[], onProgress?: (progress: number) => void) => {
+    const formData = new FormData();
+    files.forEach(file => formData.append('images', file));
+
+    return api.post<TimelineEntry>(`/timeline/${entryId}/images`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          onProgress(percentCompleted);
+        }
+      },
+    });
+  },
+  deleteImage: (entryId: number, imageKey: string) =>
+    api.delete<TimelineEntry>(`/timeline/${entryId}/images/${imageKey}`),
+  getImageUrl: (imageKey: string) => `${API_URL}/api/timeline/images/${imageKey}`,
 };
 
 export const statsApi = {

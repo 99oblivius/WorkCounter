@@ -35,20 +35,22 @@ export class TimelineEntryModel {
     workId: number;
     userId: number;
     timestamp: Date;
-    label: string;
+    label?: string;
     activityType?: string;
+    imageUrls?: string[];
   }): Promise<TimelineEntry> {
     const result = await query<TimelineEntry>(
-      `INSERT INTO timeline_entries (time_session_id, work_id, user_id, timestamp, label, activity_type)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO timeline_entries (time_session_id, work_id, user_id, timestamp, label, activity_type, image_urls)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         data.timeSessionId,
         data.workId,
         data.userId,
         data.timestamp,
-        data.label,
+        data.label || null,
         data.activityType || null,
+        data.imageUrls || null,
       ]
     );
     return result.rows[0];
@@ -57,7 +59,7 @@ export class TimelineEntryModel {
   static async update(
     id: number,
     userId: number,
-    data: Partial<Pick<TimelineEntry, 'timestamp' | 'label'>> & { activity_type?: string | null }
+    data: Partial<Pick<TimelineEntry, 'timestamp' | 'label'>> & { activity_type?: string | null; image_urls?: string[] | null }
   ): Promise<TimelineEntry> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -74,6 +76,10 @@ export class TimelineEntryModel {
     if (data.activity_type !== undefined) {
       fields.push(`activity_type = $${paramCount++}`);
       values.push(data.activity_type);
+    }
+    if (data.image_urls !== undefined) {
+      fields.push(`image_urls = $${paramCount++}`);
+      values.push(data.image_urls);
     }
 
     values.push(id, userId);

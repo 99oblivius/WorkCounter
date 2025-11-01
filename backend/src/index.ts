@@ -97,6 +97,16 @@ async function startServer() {
       console.warn('The server will continue to run, but auth endpoints will not function');
     }
 
+    // Initialize MinIO
+    try {
+      const { minioService } = await import('./services/minioService.js');
+      await minioService.initialize();
+      console.log('MinIO service initialized');
+    } catch (error) {
+      console.error('MinIO initialization failed:', error);
+      console.warn('Image upload functionality will not work');
+    }
+
     app.listen(env.PORT, () => {
       console.log(`Server running on port ${env.PORT} in ${env.NODE_ENV} mode`);
     });

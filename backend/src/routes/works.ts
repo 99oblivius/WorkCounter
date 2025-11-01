@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { WorkModel } from '../models/Work.js';
+import { TimelineEntryModel } from '../models/TimelineEntry.js';
+import { minioService } from '../services/minioService.js';
 import '../types/index.js';
 
 const router = Router();
@@ -108,14 +110,43 @@ router.delete('/:id', async (req, res, next) => {
     const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
 
+    console.log(`Deleting work ${id} for user ${userId}`);
+
+    // Get all timeline entries for this work to clean up images
+    const entries = await TimelineEntryModel.findByWorkId(id, userId);
+    console.log(`Found ${entries.length} timeline entries for work ${id}`);
+
+    // Collect all image keys from all entries
+    const imageKeys: string[] = [];
+    entries.forEach(entry => {
+      if (entry.image_urls && entry.image_urls.length > 0) {
+        console.log(`Entry ${entry.id} has ${entry.image_urls.length} images:`, entry.image_urls);
+        imageKeys.push(...entry.image_urls);
+      }
+    });
+
+    console.log(`Total images to delete: ${imageKeys.length}`);
+
+    // Delete all images from MinIO
+    if (imageKeys.length > 0) {
+      console.log(`Starting deletion of ${imageKeys.length} images from MinIO...`);
+      await minioService.deleteFiles(imageKeys);
+      console.log(`Cleaned up ${imageKeys.length} image(s) from deleted work ${id}`);
+    } else {
+      console.log(`No images to clean up for work ${id}`);
+    }
+
+    // Delete the work (cascade will delete sessions and timeline entries)
     const deleted = await WorkModel.delete(id, userId);
 
     if (!deleted) {
       return res.status(404).json({ error: 'Work not found' });
     }
 
+    console.log(`Work ${id} deleted successfully`);
     res.status(204).send();
   } catch (error) {
+    console.error(`Error deleting work ${req.params.id}:`, error);
     next(error);
   }
 });

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { TimeSessionModel } from '../models/TimeSession.js';
 import { WorkModel } from '../models/Work.js';
+import { TimelineEntryModel } from '../models/TimelineEntry.js';
+import { minioService } from '../services/minioService.js';
 import '../types/index.js';
 
 const router = Router();
@@ -131,14 +133,43 @@ router.delete('/:id', async (req, res, next) => {
     const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
 
+    console.log(`Deleting session ${id} for user ${userId}`);
+
+    // Get all timeline entries for this session to clean up images
+    const entries = await TimelineEntryModel.findBySessionId(id, userId);
+    console.log(`Found ${entries.length} timeline entries for session ${id}`);
+
+    // Collect all image keys from all entries
+    const imageKeys: string[] = [];
+    entries.forEach(entry => {
+      if (entry.image_urls && entry.image_urls.length > 0) {
+        console.log(`Entry ${entry.id} has ${entry.image_urls.length} images:`, entry.image_urls);
+        imageKeys.push(...entry.image_urls);
+      }
+    });
+
+    console.log(`Total images to delete: ${imageKeys.length}`);
+
+    // Delete all images from MinIO
+    if (imageKeys.length > 0) {
+      console.log(`Starting deletion of ${imageKeys.length} images from MinIO...`);
+      await minioService.deleteFiles(imageKeys);
+      console.log(`Cleaned up ${imageKeys.length} image(s) from deleted session ${id}`);
+    } else {
+      console.log(`No images to clean up for session ${id}`);
+    }
+
+    // Delete the session (cascade will delete timeline entries)
     const deleted = await TimeSessionModel.delete(id, userId);
 
     if (!deleted) {
       return res.status(404).json({ error: 'Session not found' });
     }
 
+    console.log(`Session ${id} deleted successfully`);
     res.status(204).send();
   } catch (error) {
+    console.error(`Error deleting session ${req.params.id}:`, error);
     next(error);
   }
 });

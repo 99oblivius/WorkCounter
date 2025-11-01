@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Clock, Edit2, Trash2 } from 'lucide-react';
 import { formatDuration } from '../hooks/useTimer';
 import type { TimelineEntry, TimeSession } from '../types';
+import ImageGallery from './ImageGallery';
 
 interface VisualTimelineProps {
   entries: TimelineEntry[];
@@ -234,7 +235,18 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                           </span>
                         )}
                       </div>
-                      <p className="text-gray-100 text-sm leading-relaxed">{item.entry.label}</p>
+                      {item.entry.label && (
+                        <p className="text-gray-100 text-sm leading-relaxed mb-2">{item.entry.label}</p>
+                      )}
+                      {item.entry.image_urls && item.entry.image_urls.length > 0 && (
+                        <ImageGallery
+                          imageKeys={item.entry.image_urls}
+                          entryId={item.entry.id}
+                          onImageDeleted={() => {
+                            // Refetch will be handled by parent
+                          }}
+                        />
+                      )}
                     </div>
                   </div>
                 </div>

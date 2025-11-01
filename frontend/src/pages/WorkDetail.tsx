@@ -83,7 +83,7 @@ export default function WorkDetail() {
   });
 
   const updateTimelineMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { label: string; activityType?: string | null } }) =>
+    mutationFn: ({ id, data }: { id: number; data: { label?: string; activityType?: string | null } }) =>
       timelineApi.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['timeline'] });
@@ -126,7 +126,7 @@ export default function WorkDetail() {
     setEditingEntry(entry);
   };
 
-  const handleSaveEntry = (data: { label: string; activityType?: string | null }) => {
+  const handleSaveEntry = (data: { label?: string; activityType?: string | null }) => {
     if (editingEntry) {
       updateTimelineMutation.mutate({ id: editingEntry.id, data });
     }
@@ -166,7 +166,20 @@ export default function WorkDetail() {
       let mimeType: string;
 
       if (format === 'json') {
-        content = JSON.stringify(exportData, null, 2);
+        // Add full image URLs to JSON export
+        const exportWithFullUrls = {
+          ...exportData,
+          timeline: exportData.timeline.map(t => ({
+            ...t,
+            entries: t.entries.map((entry: any) => ({
+              ...entry,
+              image_urls: entry.image_urls?.map((key: string) =>
+                `${import.meta.env.VITE_API_URL || window.location.origin}/api/timeline/images/${key}`
+              ),
+            })),
+          })),
+        };
+        content = JSON.stringify(exportWithFullUrls, null, 2);
         filename = `${work?.title?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${new Date().toISOString().split('T')[0]}.json`;
         mimeType = 'application/json';
       } else {
@@ -205,7 +218,14 @@ ${session.end_time ? `**End:** ${new Date(session.end_time).toLocaleString()}` :
 
 ${sessionTimeline.length > 0 ? `#### Timeline Entries
 
-${sessionTimeline.map((entry: any) => `- **${new Date(entry.timestamp).toLocaleTimeString()}** ${entry.activity_type ? `[${entry.activity_type}]` : ''}: ${entry.label}`).join('\n')}` : '_No timeline entries for this session_'}
+${sessionTimeline.map((entry: any) => {
+  const timeStr = `- **${new Date(entry.timestamp).toLocaleTimeString()}** ${entry.activity_type ? `[${entry.activity_type}]` : ''}`;
+  const labelStr = entry.label ? `: ${entry.label}` : '';
+  const imagesStr = entry.image_urls && entry.image_urls.length > 0
+    ? `\n  - **Attachments (${entry.image_urls.length}):**\n${entry.image_urls.map((key: string) => `    - ${import.meta.env.VITE_API_URL || window.location.origin}/api/timeline/images/${key}`).join('\n')}`
+    : '';
+  return `${timeStr}${labelStr}${imagesStr}`;
+}).join('\n')}` : '_No timeline entries for this session_'}
 
 ---
 `;

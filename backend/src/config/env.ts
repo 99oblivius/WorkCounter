@@ -19,6 +19,12 @@ const envSchema = z.object({
   AUTHENTIK_CLIENT_SECRET: z.string(),
   FRONTEND_URL: z.string().url(),
   BACKEND_URL: z.string().url(),
+  MINIO_ENDPOINT: z.string().default('minio'),
+  MINIO_PORT: z.string().transform(Number).default('9000'),
+  MINIO_USE_SSL: z.string().transform((val) => val === 'true').default('false'),
+  MINIO_ACCESS_KEY: z.string(),
+  MINIO_SECRET_KEY: z.string(),
+  MINIO_BUCKET: z.string().default('workcounter-images'),
 });
 
 export const env = envSchema.parse(process.env);

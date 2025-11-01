@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { Send, Tag } from 'lucide-react';
+import { Send, Tag, Paperclip } from 'lucide-react';
 import { timelineApi } from '../services/api';
+import type { PendingImage } from '../types';
+import PendingImagePreview from './PendingImagePreview';
 
 interface QuickNoteInputProps {
   workId: number;
@@ -22,37 +24,130 @@ const ACTIVITY_TYPES = [
   'Other',
 ];
 
+const MAX_IMAGES = 9;
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
 export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNoteInputProps) {
   const [note, setNote] = useState('');
   const [activityType, setActivityType] = useState('');
   const [showActivityPicker, setShowActivityPicker] = useState(false);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const mutation = useMutation({
-    mutationFn: async (data: { label: string; activityType?: string }) => {
-      return timelineApi.create({
+    mutationFn: async (data: { label?: string; activityType?: string; images: File[] }) => {
+      // Create entry first
+      const entry = await timelineApi.create({
         timeSessionId: sessionId,
         workId,
         timestamp: new Date().toISOString(),
-        label: data.label,
+        label: data.label || undefined,
         activityType: data.activityType || undefined,
       });
+
+      // Upload images if any
+      if (data.images.length > 0) {
+        // Update pending images status
+        setPendingImages(prev => prev.map(img => ({ ...img, status: 'uploading' as const, progress: 0 })));
+
+        await timelineApi.uploadImages(entry.data.id, data.images, (progress) => {
+          setPendingImages(prev => prev.map(img => ({ ...img, progress })));
+        });
+      }
+
+      return entry;
     },
     onSuccess: () => {
       setNote('');
       setActivityType('');
+      setPendingImages([]);
       onSuccess();
       inputRef.current?.focus();
     },
+    onError: () => {
+      // Reset pending images status on error
+      setPendingImages(prev => prev.map(img => ({
+        ...img,
+        status: 'error' as const,
+        error: 'Upload failed'
+      })));
+    },
   });
+
+  const addPendingImages = (files: File[]) => {
+    const validFiles = files.filter(file => {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        alert(`${file.name} is not an image file`);
+        return false;
+      }
+      // Validate file size
+      if (file.size > MAX_FILE_SIZE) {
+        alert(`${file.name} exceeds 5MB limit`);
+        return false;
+      }
+      return true;
+    });
+
+    if (pendingImages.length + validFiles.length > MAX_IMAGES) {
+      alert(`Maximum ${MAX_IMAGES} images allowed`);
+      return;
+    }
+
+    const newPendingImages: PendingImage[] = validFiles.map(file => ({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      status: 'ready',
+      progress: 0,
+    }));
+
+    setPendingImages(prev => [...prev, ...newPendingImages]);
+  };
+
+  const removePendingImage = (id: string) => {
+    setPendingImages(prev => {
+      const image = prev.find(img => img.id === id);
+      if (image) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
+      return prev.filter(img => img.id !== id);
+    });
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) {
+      addPendingImages(files);
+    }
+    // Reset input
+    e.target.value = '';
+  };
+
+  const handlePaste = (e: ClipboardEvent) => {
+    const items = Array.from(e.clipboardData?.items || []);
+    const imageFiles = items
+      .filter(item => item.type.startsWith('image/'))
+      .map(item => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addPendingImages(imageFiles);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!note.trim()) return;
+
+    // Require at least note or images
+    if (!note.trim() && pendingImages.length === 0) return;
 
     mutation.mutate({
-      label: note.trim(),
+      label: note.trim() || undefined,
       activityType: activityType || undefined,
+      images: pendingImages.map(img => img.file),
     });
   };
 
@@ -64,10 +159,18 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
     }
   };
 
-  // Auto-focus on mount
+  // Auto-focus on mount and add paste listener
   useEffect(() => {
     inputRef.current?.focus();
-  }, []);
+
+    // Add paste listener
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('paste', handlePaste);
+      // Cleanup blob URLs
+      pendingImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
+    };
+  }, [pendingImages]);
 
   return (
     <div className="bg-dark-surface border border-dark-border rounded-lg p-4">
@@ -78,6 +181,19 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-3">
+        {/* Pending images preview */}
+        {pendingImages.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {pendingImages.map(image => (
+              <PendingImagePreview
+                key={image.id}
+                image={image}
+                onRemove={removePendingImage}
+              />
+            ))}
+          </div>
+        )}
+
         <div className="flex space-x-2">
           <input
             ref={inputRef}
@@ -98,14 +214,33 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
             <Tag size={16} />
           </button>
           <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={mutation.isPending || pendingImages.length >= MAX_IMAGES}
+            className="btn btn-secondary px-3"
+            title="Attach images (Ctrl+V to paste)"
+          >
+            <Paperclip size={16} />
+          </button>
+          <button
             type="submit"
-            disabled={!note.trim() || mutation.isPending}
+            disabled={(!note.trim() && pendingImages.length === 0) || mutation.isPending}
             className="btn btn-primary px-4"
             title="Add note (Enter)"
           >
             <Send size={16} />
           </button>
         </div>
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleFileSelect}
+          className="hidden"
+        />
 
         {showActivityPicker && (
           <div className="flex flex-wrap gap-2 p-3 bg-dark-bg rounded border border-dark-border">
@@ -164,7 +299,7 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
       </form>
 
       <div className="mt-3 pt-3 border-t border-dark-border text-xs text-gray-600">
-        <span>Tip: Press Ctrl+Enter to toggle activity type</span>
+        <span>Tip: Press Ctrl+V to paste screenshots • Ctrl+Enter to toggle activity type</span>
       </div>
     </div>
   );

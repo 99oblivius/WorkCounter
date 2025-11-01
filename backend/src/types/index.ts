@@ -38,8 +38,9 @@ export interface TimelineEntry {
   work_id: number;
   user_id: number;
   timestamp: Date;
-  label: string;
+  label?: string;
   activity_type?: string;
+  image_urls?: string[];
   created_at: Date;
   updated_at: Date;
 }

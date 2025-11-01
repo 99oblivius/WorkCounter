@@ -35,10 +35,20 @@ export interface TimelineEntry {
   work_id: number;
   user_id: number;
   timestamp: string;
-  label: string;
+  label?: string;
   activity_type?: string;
+  image_urls?: string[];
   created_at: string;
   updated_at: string;
+}
+
+export interface PendingImage {
+  id: string;
+  file: File;
+  previewUrl: string;
+  status: 'ready' | 'processing' | 'uploading' | 'error';
+  progress: number;
+  error?: string;
 }
 
 export interface WorkStats {
