@@ -36,6 +36,14 @@ router.get('/callback', async (req, res) => {
 
     const userData = await handleAuthCallback(code, `${env.BACKEND_URL}/api/auth/callback`);
 
+    // Regenerate session ID for security and to ensure it's properly set
+    await new Promise<void>((resolve, reject) => {
+      req.session.regenerate((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
     req.session.user = {
       userId: userData.userId,
       authentikId: userData.authentikId,
@@ -46,8 +54,13 @@ router.get('/callback', async (req, res) => {
     // CRITICAL: Save session before redirecting to ensure session is persisted
     await new Promise<void>((resolve, reject) => {
       req.session.save((err) => {
-        if (err) reject(err);
-        else resolve();
+        if (err) {
+          console.error('Session save error:', err);
+          reject(err);
+        } else {
+          console.log('Session saved successfully for user:', userData.userId);
+          resolve();
+        }
       });
     });
 

@@ -167,12 +167,14 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
 
                 <div className="flex items-start">
                   <div className="absolute left-6 -translate-x-1/2 w-3 h-3 rounded-full bg-green-500 ring-4 ring-dark-bg z-10" />
-                  <div className="ml-12">
-                    <div className="text-xs text-gray-500 mb-1">
-                      {new Date(item.session.start_time).toLocaleString()}
-                    </div>
-                    <div className="text-sm text-green-500 font-medium">
-                      Session Started {item.session.is_running && '🟢'}
+                  <div className="ml-12 flex-1">
+                    <div className="p-3">
+                      <div className="text-xs text-gray-500 mb-1">
+                        {new Date(item.session.start_time).toLocaleString()}
+                      </div>
+                      <div className="text-sm text-green-500 font-medium">
+                        Session Started {item.session.is_running && '🟢'}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -258,12 +260,14 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
 
                 <div className="flex items-start">
                   <div className="absolute left-6 -translate-x-1/2 w-3 h-3 rounded-full bg-red-500 ring-4 ring-dark-bg z-10" />
-                  <div className="ml-12">
-                    <div className="text-xs text-gray-500 mb-1">
-                      {new Date(item.session.end_time!).toLocaleTimeString()}
-                    </div>
-                    <div className="text-sm text-red-500 font-medium">
-                      Session Ended • {formatDuration(duration)}
+                  <div className="ml-12 flex-1">
+                    <div className="p-3">
+                      <div className="text-xs text-gray-500 mb-1">
+                        {new Date(item.session.end_time!).toLocaleTimeString()}
+                      </div>
+                      <div className="text-sm text-red-500 font-medium">
+                        Session Ended • {formatDuration(duration)}
+                      </div>
                     </div>
                   </div>
                 </div>

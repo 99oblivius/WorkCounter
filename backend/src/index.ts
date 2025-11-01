@@ -60,11 +60,12 @@ app.use(
     secret: env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+    name: 'workcounter.sid', // Custom name to avoid conflicts
     cookie: {
       httpOnly: true,
       secure: env.NODE_ENV === 'production',
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: env.NODE_ENV === 'production' ? 'lax' : 'lax', // 'lax' works better with OAuth redirects
+      sameSite: 'lax', // 'lax' works better with OAuth redirects
       path: '/',
     },
   })

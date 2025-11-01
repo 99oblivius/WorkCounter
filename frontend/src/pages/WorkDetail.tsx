@@ -296,8 +296,8 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
         </div>
       </header>
 
-      <main className="flex-1 overflow-hidden flex flex-col">
-        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 flex flex-col overflow-hidden w-full">
+      <main className="flex-1 overflow-auto flex flex-col">
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 flex flex-col w-full">
         <div className="mb-6 flex-shrink-0">
           <h1 className="text-3xl font-bold text-gray-100 mb-2">{work.title}</h1>
           {work.client_name && (
@@ -386,9 +386,9 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
         </div>
 
         {/* Visual Timeline Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1" style={{ minHeight: '500px' }}>
           {/* Main Timeline */}
-          <div className="lg:col-span-2 card flex flex-col h-full min-h-0">
+          <div className="order-2 lg:order-1 lg:col-span-2 card flex flex-col h-full" style={{ minHeight: '500px' }}>
             <VisualTimeline
               entries={timelineEntries}
               sessions={sessions}
@@ -400,7 +400,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-6 h-full overflow-y-auto min-h-0">
+          <div className="order-1 lg:order-2 space-y-6 h-full overflow-y-auto" style={{ minHeight: '500px' }}>
             {/* Quick Note Input - Only for running sessions */}
             {runningSession && (
               <QuickNoteInput
@@ -456,7 +456,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                           e.stopPropagation();
                           handleDeleteSession(session.id);
                         }}
-                        className="absolute top-1 right-1 p-1 opacity-0 group-hover:opacity-100 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400 transition-opacity"
+                        className="absolute bottom-1 right-1 p-1 opacity-0 group-hover:opacity-100 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400 transition-opacity"
                         title="Delete session"
                       >
                         <Trash2 size={14} />
