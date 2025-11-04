@@ -12,32 +12,23 @@ interface FileStorageSectionProps {
   userId: number;
 }
 
-/**
- * Minimalistic file storage section with professional upload queue
- * - Simple file input button + drag & drop
- * - Files appear inline (completed files only)
- * - Active uploads shown in UploadProgressPanel
- * - Uses queue system for reliable uploads
- */
 export default function FileStorageSection({ workId, userId }: FileStorageSectionProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [isDragging, setIsDragging] = useState(false);
 
-  // Use the new upload hook
   const { queueFiles } = useFileUpload(workId, userId);
 
-  // Fetch completed files only (no polling needed - uploads update via queue)
+  // No polling - uploads update via queue invalidation
   const { data: files = [] } = useQuery({
     queryKey: ['files', 'work', workId],
     queryFn: async () => {
       const response = await filesApi.getByWorkId(workId);
       return response.data;
     },
-    refetchInterval: false, // No polling - updates via invalidation
+    refetchInterval: false,
   });
 
-  // Delete file mutation
   const deleteMutation = useMutation({
     mutationFn: (fileId: number) => filesApi.delete(fileId),
     onSuccess: () => {
@@ -45,14 +36,12 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
     },
   });
 
-  // Download file
   const handleDownload = async (fileId: number) => {
     try {
       const response = await filesApi.download(fileId);
       const file = files.find(f => f.id === fileId);
       if (!file) return;
 
-      // Create download link
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -67,21 +56,18 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
     }
   };
 
-  // Handle file selection
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = event.target.files;
     if (!selectedFiles || selectedFiles.length === 0) return;
 
-    // Add files to upload queue
     queueFiles(Array.from(selectedFiles));
 
-    // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  // Handle drag events with proper counter to avoid flickering
+  // Drag counter prevents flickering when dragging over child elements
   const dragCounterRef = useRef(0);
 
   const handleDragEnter = (e: React.DragEvent) => {
@@ -118,7 +104,6 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
 
     const droppedFiles = e.dataTransfer.files;
     if (droppedFiles && droppedFiles.length > 0) {
-      // Add files to upload queue
       queueFiles(Array.from(droppedFiles));
     }
   };
@@ -131,7 +116,6 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Drag and drop overlay */}
       {isDragging && (
         <div className="absolute inset-0 z-10 bg-blue-500 bg-opacity-10 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center pointer-events-none">
           <div className="text-center">
@@ -143,7 +127,6 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-lg font-bold text-gray-100">Attached Files</h3>
 
-        {/* Simple file input button */}
         <button
           onClick={() => fileInputRef.current?.click()}
           className="btn btn-primary btn-sm flex items-center space-x-2"
@@ -153,7 +136,6 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
           <span>Add Files</span>
         </button>
 
-        {/* Hidden file input */}
         <input
           ref={fileInputRef}
           type="file"
@@ -163,12 +145,9 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
         />
       </div>
 
-      {/* File List */}
       <div className="space-y-2 flex-1 overflow-y-auto">
-        {/* Active Uploads - shown at the top */}
         <InlineUploadProgress />
 
-        {/* Completed Files */}
         {files.length === 0 && (
           <p className="text-gray-500 text-center py-4 text-sm">
             No files yet. Click "Add Files" or drag & drop to upload.

@@ -2,19 +2,10 @@ import { FileStorageModel } from '../models/FileStorage.js';
 import { minioService } from '../services/minioService.js';
 import { tusServer } from '../services/tusService.js';
 
-/**
- * Cleanup abandoned uploads
- * - Uploads created >24h ago still in 'uploading' status
- * - Orphaned MinIO objects
- * - Old tus metadata files
- *
- * Should be run as a cron job (e.g., daily at 3 AM)
- */
 export async function cleanupAbandonedUploads() {
   console.log('[Cleanup] Starting abandoned upload cleanup...');
 
   try {
-    // Find and mark abandoned uploads (created >24h ago, still 'uploading')
     const abandonedCount = await FileStorageModel.cleanupAbandoned();
 
     if (abandonedCount > 0) {
@@ -37,15 +28,9 @@ export async function cleanupAbandonedUploads() {
   }
 }
 
-/**
- * Start the cleanup scheduler
- * Runs cleanup every 6 hours
- */
 export function startCleanupScheduler() {
-  // Run immediately on startup
   cleanupAbandonedUploads();
 
-  // Then run every 6 hours
   const SIX_HOURS = 6 * 60 * 60 * 1000;
   setInterval(cleanupAbandonedUploads, SIX_HOURS);
 

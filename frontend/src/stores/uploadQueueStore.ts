@@ -3,46 +3,38 @@ import { devtools, persist } from 'zustand/middleware';
 import * as tus from 'tus-js-client';
 
 export interface UploadItem {
-  id: string; // Unique client-side ID
-  fileId?: number; // Database ID (set after server response)
+  id: string;
+  fileId?: number; // Set after server response
   file: File;
   workId: number;
 
-  // Status
   status: 'pending' | 'uploading' | 'completed' | 'failed' | 'cancelled' | 'paused';
-  progress: number; // 0-100
+  progress: number;
   uploadedBytes: number;
   totalBytes: number;
 
-  // Speed tracking
-  speed: number; // Bytes per second
-  eta: number; // Estimated seconds remaining
+  speed: number;
+  eta: number;
 
-  // tus upload instance (not persisted)
-  tusUpload?: tus.Upload;
-  uploadUrl?: string; // For resuming
+  tusUpload?: tus.Upload; // Not persisted to storage
+  uploadUrl?: string;
 
-  // Timestamps
   startedAt?: number;
   completedAt?: number;
 
-  // Error
   error?: string;
   retryCount: number;
 }
 
 interface UploadQueueState {
-  // Queue
   uploads: Map<string, UploadItem>;
   maxConcurrent: number;
 
-  // Actions
   addUpload: (file: File, workId: number) => string;
   removeUpload: (uploadId: string) => void;
   clearCompleted: () => void;
   clearAll: () => void;
 
-  // Upload control
   setTusUpload: (uploadId: string, tusUpload: tus.Upload, uploadUrl?: string) => void;
   setFileId: (uploadId: string, fileId: number) => void;
   startUpload: (uploadId: string) => void;
@@ -51,12 +43,10 @@ interface UploadQueueState {
   cancelUpload: (uploadId: string) => void;
   retryUpload: (uploadId: string) => void;
 
-  // Progress updates
   updateProgress: (uploadId: string, uploadedBytes: number, speed: number) => void;
   setCompleted: (uploadId: string) => void;
   setFailed: (uploadId: string, error: string) => void;
 
-  // Computed
   getActiveUploads: () => UploadItem[];
   getPendingUploads: () => UploadItem[];
   getUploadingCount: () => number;
@@ -64,13 +54,11 @@ interface UploadQueueState {
   getTotalProgress: () => number;
 }
 
-// Helper to calculate ETA
 function calculateETA(remainingBytes: number, speed: number): number {
   if (speed === 0) return 0;
   return Math.round(remainingBytes / speed);
 }
 
-// Generate unique upload ID
 function generateUploadId(): string {
   return `upload-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
@@ -80,9 +68,8 @@ export const useUploadQueue = create<UploadQueueState>()(
     persist(
       (set, get) => ({
         uploads: new Map(),
-        maxConcurrent: 3, // Max 3 simultaneous uploads (Dropbox-like)
+        maxConcurrent: 3,
 
-        // Add file to queue
         addUpload: (file: File, workId: number) => {
           const id = generateUploadId();
 
@@ -106,13 +93,11 @@ export const useUploadQueue = create<UploadQueueState>()(
           return id;
         },
 
-        // Remove upload from queue
         removeUpload: (uploadId: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
             const upload = newUploads.get(uploadId);
 
-            // Abort tus upload if active
             if (upload?.tusUpload) {
               try {
                 upload.tusUpload.abort(true);
@@ -126,7 +111,6 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Clear completed uploads
         clearCompleted: () => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -139,11 +123,9 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Clear all uploads
         clearAll: () => {
           set((state) => {
             const newUploads = new Map(state.uploads);
-            // Abort all active uploads
             for (const upload of newUploads.values()) {
               if (upload.tusUpload && upload.status === 'uploading') {
                 try {
@@ -158,7 +140,6 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Set tus upload instance (called immediately after creation)
         setTusUpload: (uploadId: string, tusUpload: tus.Upload, uploadUrl?: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -171,7 +152,6 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Set file ID from server
         setFileId: (uploadId: string, fileId: number) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -183,7 +163,6 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Start upload
         startUpload: (uploadId: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -196,20 +175,18 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Pause upload
         pauseUpload: (uploadId: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
             const upload = newUploads.get(uploadId);
             if (upload?.tusUpload) {
-              upload.tusUpload.abort(false); // Don't terminate, just pause
+              upload.tusUpload.abort(false); // Pause without terminating
               upload.status = 'paused';
             }
             return { uploads: newUploads };
           });
         },
 
-        // Resume upload
         resumeUpload: (uploadId: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -222,20 +199,18 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Cancel upload
         cancelUpload: (uploadId: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
             const upload = newUploads.get(uploadId);
             if (upload?.tusUpload) {
-              upload.tusUpload.abort(true); // Terminate upload
+              upload.tusUpload.abort(true); // Terminate permanently
               upload.status = 'cancelled';
             }
             return { uploads: newUploads };
           });
         },
 
-        // Retry failed upload
         retryUpload: (uploadId: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -253,7 +228,6 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Update progress
         updateProgress: (uploadId: string, uploadedBytes: number, speed: number) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -268,7 +242,6 @@ export const useUploadQueue = create<UploadQueueState>()(
           });
         },
 
-        // Mark as completed
         setCompleted: (uploadId: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -277,13 +250,12 @@ export const useUploadQueue = create<UploadQueueState>()(
               upload.status = 'completed';
               upload.progress = 100;
               upload.completedAt = Date.now();
-              upload.tusUpload = undefined; // Clear reference
+              upload.tusUpload = undefined;
             }
             return { uploads: newUploads };
           });
         },
 
-        // Mark as failed
         setFailed: (uploadId: string, error: string) => {
           set((state) => {
             const newUploads = new Map(state.uploads);
@@ -291,13 +263,12 @@ export const useUploadQueue = create<UploadQueueState>()(
             if (upload) {
               upload.status = 'failed';
               upload.error = error;
-              upload.tusUpload = undefined; // Clear reference
+              upload.tusUpload = undefined;
             }
             return { uploads: newUploads };
           });
         },
 
-        // Get active uploads
         getActiveUploads: () => {
           const state = get();
           return Array.from(state.uploads.values()).filter(
@@ -305,19 +276,16 @@ export const useUploadQueue = create<UploadQueueState>()(
           );
         },
 
-        // Get pending uploads
         getPendingUploads: () => {
           const state = get();
           return Array.from(state.uploads.values()).filter(u => u.status === 'pending');
         },
 
-        // Get count of uploading files
         getUploadingCount: () => {
           const state = get();
           return Array.from(state.uploads.values()).filter(u => u.status === 'uploading').length;
         },
 
-        // Check if any uploads are active
         isUploading: () => {
           const state = get();
           return Array.from(state.uploads.values()).some(
@@ -325,7 +293,6 @@ export const useUploadQueue = create<UploadQueueState>()(
           );
         },
 
-        // Calculate total progress
         getTotalProgress: () => {
           const state = get();
           const uploads = Array.from(state.uploads.values());
@@ -339,7 +306,6 @@ export const useUploadQueue = create<UploadQueueState>()(
       }),
       {
         name: 'upload-queue',
-        // Only persist metadata, not File objects or tus instances
         partialize: (state) => ({
           uploads: Array.from(state.uploads.entries())
             .filter(([, upload]) => upload.status !== 'completed' && upload.uploadUrl)
@@ -355,7 +321,6 @@ export const useUploadQueue = create<UploadQueueState>()(
                 totalBytes: upload.totalBytes,
                 uploadUrl: upload.uploadUrl,
                 retryCount: upload.retryCount,
-                // Note: File object cannot be persisted
               },
             ]),
         }),

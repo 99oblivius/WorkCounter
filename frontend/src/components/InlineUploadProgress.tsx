@@ -2,10 +2,6 @@ import { useUploadQueue } from '../stores/uploadQueueStore';
 import { X, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { formatBytes, formatSpeed, formatTime } from '../utils/format';
 
-/**
- * Inline upload progress component for FileStorageSection
- * Shows active uploads in a compact, integrated style
- */
 export default function InlineUploadProgress() {
   const {
     uploads,
@@ -29,7 +25,6 @@ export default function InlineUploadProgress() {
 
   return (
     <div className="space-y-2 mb-4">
-      {/* Header */}
       {activeUploads.length > 0 && (
         <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
           <span className="font-medium">
@@ -38,7 +33,6 @@ export default function InlineUploadProgress() {
         </div>
       )}
 
-      {/* Upload items */}
       {allDisplayed.map((upload) => (
         <UploadItem
           key={upload.id}
@@ -76,15 +70,12 @@ function UploadItem({ upload, onCancel, onRetry, onRemove }: UploadItemProps) {
   return (
     <div className="w-full bg-dark-bg border border-dark-border hover:border-gray-600 rounded p-3 text-xs transition-colors">
       <div className="flex items-start space-x-3">
-        {/* Status Icon */}
         <div className="flex-shrink-0 mt-0.5">{getStatusIcon()}</div>
 
-        {/* File Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-1">
             <p className="text-gray-300 truncate font-medium">{upload.file.name}</p>
 
-            {/* Actions */}
             <div className="flex items-center space-x-2 ml-2 flex-shrink-0">
               {(isUploading || isPending) && (
                 <>
@@ -125,7 +116,6 @@ function UploadItem({ upload, onCancel, onRetry, onRemove }: UploadItemProps) {
             </div>
           </div>
 
-          {/* Progress details */}
           <div className="flex items-center space-x-2 text-gray-500">
             {isPending && <span>Waiting in queue...</span>}
 
@@ -156,7 +146,6 @@ function UploadItem({ upload, onCancel, onRetry, onRemove }: UploadItemProps) {
             )}
           </div>
 
-          {/* Progress Bar */}
           {(isUploading || isPending) && (
             <div className="mt-2">
               <div className="w-full bg-dark-surface rounded-full h-1">
