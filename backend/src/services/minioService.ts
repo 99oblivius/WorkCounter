@@ -152,6 +152,20 @@ class MinIOService {
     const deletePromises = keys.map(key => this.deleteFile(key));
     await Promise.all(deletePromises);
   }
+
+  /**
+   * Get the S3 client instance (for tus integration)
+   */
+  getClient(): S3Client {
+    return this.client;
+  }
+
+  /**
+   * Get the bucket name (for tus integration)
+   */
+  getBucket(): string {
+    return this.bucket;
+  }
 }
 
 // Export singleton instance

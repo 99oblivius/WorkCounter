@@ -1,0 +1,204 @@
+import { Router } from 'express';
+import { requireAuth } from '../middleware/auth.js';
+import { FileStorageModel } from '../models/FileStorage.js';
+import { minioService } from '../services/minioService.js';
+import { tusServer } from '../services/tusService.js';
+
+const router = Router();
+
+// Middleware to check auth for tus and restore original res.end (session middleware wraps it)
+const tusAuthCheck = (req: any, res: any, next: any) => {
+  if (!req.session?.user?.userId) {
+    console.error('[tus route] Unauthorized upload attempt');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  // CRITICAL: Restore the original res.end that was wrapped by express-session
+  // This prevents session middleware from interfering with tus/srvx response handling
+  if ((res as any)._originalEnd) {
+    res.end = (res as any)._originalEnd;
+  }
+
+  next();
+};
+
+// tus upload endpoints - auth checked but session response wrapping removed
+// POST /api/files/upload - Create new upload
+// HEAD /api/files/upload/:id - Check upload status
+// PATCH /api/files/upload/:id - Upload chunk
+// DELETE /api/files/upload/:id - Cancel upload (not exposed to frontend)
+router.all('/upload', tusAuthCheck, (req, res) => {
+  return tusServer.handle(req, res);
+});
+
+router.all('/upload/*', tusAuthCheck, (req, res) => {
+  return tusServer.handle(req, res);
+});
+
+// All other routes require authentication
+router.use(requireAuth);
+
+// Get all files for a work (completed only)
+router.get('/work/:workId', async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+    const workId = parseInt(req.params.workId, 10);
+
+    const files = await FileStorageModel.findByWorkId(workId, userId);
+    res.json(files);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get all files for a work (including in-progress) - for minimalistic inline progress
+router.get('/work/:workId/all', async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+    const workId = parseInt(req.params.workId, 10);
+
+    const files = await FileStorageModel.findAllByWorkId(workId, userId);
+    res.json(files);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get file metadata
+router.get('/:fileId', async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+    const fileId = parseInt(req.params.fileId, 10);
+
+    const file = await FileStorageModel.findById(fileId, userId);
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    res.json(file);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Download file
+router.get('/:fileId/download', async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+    const fileId = parseInt(req.params.fileId, 10);
+
+    const file = await FileStorageModel.findById(fileId, userId);
+    if (!file || file.upload_status !== 'completed') {
+      return res.status(404).json({ error: 'File not found or not ready' });
+    }
+
+    // User isolation check (validate storage key starts with userId)
+    const parts = file.storage_key.split('/');
+    const fileUserId = parseInt(parts[0], 10);
+    if (fileUserId !== userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    console.log(`[Download] User ${userId} downloading file ${fileId}: ${file.display_name}`);
+
+    // Get file from MinIO
+    const { buffer, contentType } = await minioService.getFile(file.storage_key);
+
+    // Set download headers
+    res.set({
+      'Content-Type': file.mime_type || contentType || 'application/octet-stream',
+      'Content-Length': buffer.length.toString(),
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(file.display_name)}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, max-age=0',
+    });
+
+    res.send(buffer);
+  } catch (error) {
+    console.error('[Download] Error:', error);
+    next(error);
+  }
+});
+
+// Delete file
+router.delete('/:fileId', async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+    const fileId = parseInt(req.params.fileId, 10);
+
+    console.log(`[Delete] User ${userId} deleting file ${fileId}`);
+
+    // Get file to delete
+    const file = await FileStorageModel.findById(fileId, userId);
+    if (file) {
+      // Delete tus metadata (.info file) if it exists
+      try {
+        await tusServer.datastore.remove(file.storage_key);
+        console.log(`[Delete] Removed tus metadata: ${file.storage_key}`);
+      } catch (err) {
+        console.log(`[Delete] No tus metadata to remove: ${err}`);
+      }
+
+      // Delete from MinIO if upload was completed
+      if (file.upload_status === 'completed') {
+        await minioService.deleteFile(file.storage_key);
+        console.log(`[Delete] Removed from MinIO: ${file.storage_key}`);
+      }
+
+      // Delete from database
+      await FileStorageModel.delete(fileId, userId);
+      console.log(`[Delete] Removed from database: ${fileId}`);
+    }
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('[Delete] Error:', error);
+    next(error);
+  }
+});
+
+// Cancel upload (delete tus upload, delete partial file, delete database entry)
+router.post('/:fileId/cancel', async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+    const fileId = parseInt(req.params.fileId, 10);
+
+    const file = await FileStorageModel.findById(fileId, userId);
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    console.log(`[Cancel] User ${userId} cancelling file ${fileId} (status: ${file.upload_status})`);
+
+    // 1. Delete tus upload metadata (.info file)
+    if (file.storage_key) {
+      try {
+        // Remove tus upload - this deletes the .info file
+        await tusServer.datastore.remove(file.storage_key);
+        console.log(`[Cancel] Removed tus metadata: ${file.storage_key}`);
+      } catch (err) {
+        console.error('[Cancel] Error removing tus metadata:', err);
+      }
+    }
+
+    // 2. Delete file from MinIO (partial or complete)
+    try {
+      await minioService.deleteFile(file.storage_key);
+      console.log(`[Cancel] Deleted file from MinIO: ${file.storage_key}`);
+    } catch (err) {
+      // File might not exist yet if upload just started
+      console.log(`[Cancel] No file to delete from MinIO (may not have started): ${err}`);
+    }
+
+    // 3. Delete from database
+    await FileStorageModel.delete(fileId, userId);
+    console.log(`[Cancel] Removed from database: ${fileId}`);
+
+    res.status(204).send();
+  } catch (error) {
+    console.error('[Cancel] Error:', error);
+    next(error);
+  }
+});
+
+export default router;

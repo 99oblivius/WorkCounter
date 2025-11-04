@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { WorkModel } from '../models/Work.js';
 import { TimelineEntryModel } from '../models/TimelineEntry.js';
+import { FileStorageModel } from '../models/FileStorage.js';
 import { minioService } from '../services/minioService.js';
 import '../types/index.js';
 
@@ -125,18 +126,38 @@ router.delete('/:id', async (req, res, next) => {
       }
     });
 
-    console.log(`Total images to delete: ${imageKeys.length}`);
+    console.log(`Total timeline images to delete: ${imageKeys.length}`);
 
-    // Delete all images from MinIO
+    // Delete all timeline images from MinIO
     if (imageKeys.length > 0) {
-      console.log(`Starting deletion of ${imageKeys.length} images from MinIO...`);
+      console.log(`Starting deletion of ${imageKeys.length} timeline images from MinIO...`);
       await minioService.deleteFiles(imageKeys);
-      console.log(`Cleaned up ${imageKeys.length} image(s) from deleted work ${id}`);
+      console.log(`Cleaned up ${imageKeys.length} timeline image(s) from deleted work ${id}`);
     } else {
-      console.log(`No images to clean up for work ${id}`);
+      console.log(`No timeline images to clean up for work ${id}`);
     }
 
-    // Delete the work (cascade will delete sessions and timeline entries)
+    // Get all file storage files for this work to clean up
+    const files = await FileStorageModel.findForWorkDeletion(id, userId);
+    console.log(`Found ${files.length} file storage files for work ${id}`);
+
+    // Collect storage keys from completed files
+    const fileKeys: string[] = files
+      .filter(f => f.upload_status === 'completed')
+      .map(f => f.storage_key);
+
+    console.log(`Total storage files to delete: ${fileKeys.length}`);
+
+    // Delete all storage files from MinIO
+    if (fileKeys.length > 0) {
+      console.log(`Starting deletion of ${fileKeys.length} storage files from MinIO...`);
+      await minioService.deleteFiles(fileKeys);
+      console.log(`Cleaned up ${fileKeys.length} storage file(s) from deleted work ${id}`);
+    } else {
+      console.log(`No storage files to clean up for work ${id}`);
+    }
+
+    // Delete the work (cascade will delete sessions, timeline entries, and file_storage records)
     const deleted = await WorkModel.delete(id, userId);
 
     if (!deleted) {

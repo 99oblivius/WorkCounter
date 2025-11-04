@@ -1,7 +1,8 @@
 import axios from 'axios';
-import type { Work, TimeSession, TimelineEntry, User, StatsOverview } from '../types';
+import type { Work, TimeSession, TimelineEntry, User, StatsOverview, FileStorageRecord } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+export { API_URL };
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
@@ -69,4 +70,38 @@ export const statsApi = {
   getOverview: (params?: { startDate?: string; endDate?: string }) =>
     api.get<StatsOverview>('/stats/overview', { params }),
   getToday: () => api.get<{ totalDuration: number; workCount: number }>('/stats/today'),
+};
+
+export const filesApi = {
+  // Get all completed files for a work
+  getByWorkId: (workId: number) =>
+    api.get<FileStorageRecord[]>(`/files/work/${workId}`),
+
+  // Get all files including in-progress (for inline progress UI)
+  getAllByWorkId: (workId: number) =>
+    api.get<FileStorageRecord[]>(`/files/work/${workId}/all`),
+
+  // Get single file metadata
+  getById: (fileId: number) =>
+    api.get<FileStorageRecord>(`/files/${fileId}`),
+
+  // Download file
+  download: (fileId: number) =>
+    api.get(`/files/${fileId}/download`, { responseType: 'blob' }),
+
+  // Delete file
+  delete: (fileId: number) =>
+    api.delete(`/files/${fileId}`),
+
+  // Cancel upload
+  cancel: (fileId: number) =>
+    api.post(`/files/${fileId}/cancel`),
+
+  // Get download URL
+  getDownloadUrl: (fileId: number) =>
+    `${API_URL}/api/files/${fileId}/download`,
+
+  // Get tus upload endpoint
+  getTusEndpoint: () =>
+    `${API_URL}/api/files/upload`,
 };

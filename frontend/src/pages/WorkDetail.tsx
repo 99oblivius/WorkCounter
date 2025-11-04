@@ -2,13 +2,15 @@ import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download } from 'lucide-react';
-import { worksApi, sessionsApi, timelineApi } from '../services/api';
+import { worksApi, sessionsApi, timelineApi, authApi } from '../services/api';
 import { useTimer, formatDuration } from '../hooks/useTimer';
+import { useUploadWarning } from '../hooks/useUploadWarning';
 import WorkForm from '../components/WorkForm';
 import TimelineForm from '../components/TimelineForm';
 import VisualTimeline from '../components/VisualTimeline';
 import QuickNoteInput from '../components/QuickNoteInput';
 import EditTimelineModal from '../components/EditTimelineModal';
+import FileStorageSection from '../components/FileStorageSection';
 import type { TimeSession, TimelineEntry } from '../types';
 
 export default function WorkDetail() {
@@ -22,6 +24,9 @@ export default function WorkDetail() {
   const [scrollToSessionId, setScrollToSessionId] = useState<number | null>(null);
   const [editingEntry, setEditingEntry] = useState<TimelineEntry | null>(null);
 
+  // Warn user before leaving page if uploads are in progress
+  useUploadWarning();
+
   const { data: work } = useQuery({
     queryKey: ['works', workId],
     queryFn: async () => {
@@ -34,6 +39,14 @@ export default function WorkDetail() {
     queryKey: ['sessions', 'work', workId],
     queryFn: async () => {
       const response = await sessionsApi.getByWorkId(workId);
+      return response.data;
+    },
+  });
+
+  const { data: user } = useQuery({
+    queryKey: ['user'],
+    queryFn: async () => {
+      const response = await authApi.getMe();
       return response.data;
     },
   });
@@ -494,6 +507,11 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 )}
               </div>
             </div>
+
+            {/* File Storage Section */}
+            {user && (
+              <FileStorageSection workId={workId} userId={user.userId} />
+            )}
           </div>
         </div>
         </div>

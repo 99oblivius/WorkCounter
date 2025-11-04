@@ -64,3 +64,25 @@ export interface StatsOverview {
   };
   works: WorkStats[];
 }
+
+export interface FileStorageRecord {
+  id: number;
+  work_id: number;
+  user_id: number;
+  filename: string;
+  original_name: string;
+  display_name: string;
+  file_size: number;
+  mime_type: string | null;
+  file_extension: string | null;
+  storage_key: string;
+  tus_id: string | null;
+  upload_status: 'uploading' | 'completed' | 'failed' | 'cancelled';
+  upload_progress: number;
+  uploaded_bytes: number;
+  error_message: string | null;
+  retry_count: number;
+  uploaded_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

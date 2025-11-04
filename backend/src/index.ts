@@ -15,6 +15,7 @@ import worksRoutes from './routes/works.js';
 import timeSessionsRoutes from './routes/timeSessions.js';
 import timelineEntriesRoutes from './routes/timelineEntries.js';
 import statsRoutes from './routes/stats.js';
+import fileStorageRoutes from './routes/fileStorage.js';
 
 const app = express();
 
@@ -54,6 +55,12 @@ const redisStore = new RedisStore({
   prefix: 'workcounter:sess:',
 });
 
+// Middleware to save original res.end before session wraps it (for tus compatibility)
+app.use((req, res, next) => {
+  (res as any)._originalEnd = res.end;
+  next();
+});
+
 app.use(
   session({
     store: redisStore,
@@ -76,6 +83,7 @@ app.use('/api/works', worksRoutes);
 app.use('/api/sessions', timeSessionsRoutes);
 app.use('/api/timeline', timelineEntriesRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/files', fileStorageRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -105,6 +113,14 @@ async function startServer() {
     } catch (error) {
       console.error('MinIO initialization failed:', error);
       console.warn('Image upload functionality will not work');
+    }
+
+    // Start upload cleanup scheduler
+    try {
+      const { startCleanupScheduler } = await import('./jobs/cleanupUploads.js');
+      startCleanupScheduler();
+    } catch (error) {
+      console.error('Failed to start cleanup scheduler:', error);
     }
 
     app.listen(env.PORT, () => {
