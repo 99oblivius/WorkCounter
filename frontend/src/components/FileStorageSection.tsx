@@ -3,8 +3,16 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { Paperclip } from 'lucide-react';
 import FileListItem from './FileListItem';
 import InlineUploadProgress from './InlineUploadProgress';
+import ZippingNotification from './ZippingNotification';
 import { filesApi } from '../services/api';
 import { useFileUpload } from '../hooks/useFileUpload';
+import { useZippingQueue } from '../stores/zippingQueueStore';
+import {
+  isFolderSupported,
+  processDataTransferItems,
+  zipFolder,
+  FolderZipError,
+} from '../utils/folderZip';
 import type { FileStorageRecord } from '../types';
 
 interface FileStorageSectionProps {
@@ -16,8 +24,10 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [isDragging, setIsDragging] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const { queueFiles } = useFileUpload(workId, userId);
+  const { addZipping, updateProgress, setCompleted, setFailed } = useZippingQueue();
 
   // No polling - uploads update via queue invalidation
   const { data: files = [] } = useQuery({
@@ -96,15 +106,97 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     dragCounterRef.current = 0;
     setIsDragging(false);
 
-    const droppedFiles = e.dataTransfer.files;
-    if (droppedFiles && droppedFiles.length > 0) {
-      queueFiles(Array.from(droppedFiles));
+    if (isProcessing) return;
+
+    const { items, files: legacyFiles } = e.dataTransfer;
+
+    console.log('[Drop] DataTransfer items:', items?.length || 0);
+    console.log('[Drop] DataTransfer files:', legacyFiles?.length || 0);
+    console.log('[Drop] Folder support:', isFolderSupported());
+
+    if (!items || items.length === 0) {
+      console.log('[Drop] No items, falling back to legacy files API');
+      const droppedFiles = Array.from(legacyFiles || []).filter(f => f.size > 0);
+      if (droppedFiles.length > 0) {
+        queueFiles(droppedFiles);
+      } else {
+        console.warn('[Drop] All files have 0 bytes - might be folders');
+        alert('Folder upload not supported in this browser. Please zip the folder manually or use a modern browser.');
+      }
+      return;
+    }
+
+    if (!isFolderSupported()) {
+      console.log('[Drop] Folder API not supported, falling back to legacy files');
+      const droppedFiles = Array.from(legacyFiles || []).filter(f => f.size > 0);
+      if (droppedFiles.length > 0) {
+        queueFiles(droppedFiles);
+      } else {
+        console.warn('[Drop] All files have 0 bytes - might be folders');
+        alert('Folder upload not supported in this browser. Please zip the folder manually or use a modern browser.');
+      }
+      return;
+    }
+
+    setIsProcessing(true);
+
+    try {
+      console.log('[Drop] Processing items with folder support...');
+      const { files, folders } = await processDataTransferItems(items);
+
+      console.log('[Drop] Detected files:', files.length);
+      console.log('[Drop] Detected folders:', folders.length);
+
+      if (files.length > 0) {
+        console.log('[Drop] Queueing', files.length, 'files for upload');
+        queueFiles(files);
+      }
+
+      if (folders.length === 0 && files.length === 0) {
+        console.warn('[Drop] No valid files or folders detected');
+        alert('No valid files found to upload.');
+        setIsProcessing(false);
+        return;
+      }
+
+      for (const folder of folders) {
+        if (folder.items.length === 0) {
+          console.warn(`[Drop] Skipping empty folder: ${folder.name}`);
+          continue;
+        }
+
+        console.log(`[Drop] Zipping folder "${folder.name}" with ${folder.items.length} files`);
+        const zippingId = addZipping(folder.name, folder.items.length);
+
+        try {
+          const zipFile = await zipFolder(folder.name, folder.items, (progress) => {
+            updateProgress(zippingId, progress.filesProcessed, progress.currentFile);
+          });
+
+          console.log(`[Drop] Zip complete: ${zipFile.name} (${zipFile.size} bytes)`);
+          setCompleted(zippingId);
+
+          queueFiles([zipFile]);
+        } catch (error) {
+          console.error(`[Drop] Failed to zip folder ${folder.name}:`, error);
+          const errorMessage =
+            error instanceof FolderZipError
+              ? error.message
+              : 'Failed to create zip file';
+          setFailed(zippingId, errorMessage);
+        }
+      }
+    } catch (error) {
+      console.error('[Drop] Failed to process dropped items:', error);
+      alert('Failed to process dropped files/folders. Please try again.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -146,6 +238,7 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
       </div>
 
       <div className="space-y-2 flex-1 overflow-y-auto">
+        <ZippingNotification />
         <InlineUploadProgress />
 
         {files.length === 0 && (

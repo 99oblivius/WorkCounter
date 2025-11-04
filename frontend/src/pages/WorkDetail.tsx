@@ -456,6 +456,11 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               </button>
             )}
 
+            {/* File Storage Section */}
+            {user && (
+              <FileStorageSection workId={workId} userId={user.userId} />
+            )}
+
             {/* Session History */}
             <div className="card flex-1 flex flex-col">
               <h3 className="text-lg font-bold text-gray-100 mb-3">Sessions History</h3>
@@ -507,11 +512,6 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 )}
               </div>
             </div>
-
-            {/* File Storage Section */}
-            {user && (
-              <FileStorageSection workId={workId} userId={user.userId} />
-            )}
           </div>
         </div>
         </div>

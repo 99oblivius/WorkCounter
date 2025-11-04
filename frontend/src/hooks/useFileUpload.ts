@@ -232,6 +232,12 @@ export function useFileUpload(workId: number, userId: number) {
       const uploadIds: string[] = [];
 
       for (const file of files) {
+        if (file.size === 0) {
+          console.warn(`[Upload] Skipping 0-byte file: ${file.name}`);
+          alert(`File "${file.name}" is empty (0 bytes). Folders cannot be uploaded directly - please use a zip file.`);
+          continue;
+        }
+
         if (file.size > 5 * 1024 * 1024 * 1024) {
           alert(`File "${file.name}" exceeds 5GB limit`);
           continue;
