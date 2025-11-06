@@ -1,16 +1,62 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.js';
 import { FileStorageModel } from '../models/FileStorage.js';
+import { WorkAccessService } from '../services/workAccessService.js';
 import { minioService } from '../services/minioService.js';
 import { tusServer } from '../services/tusService.js';
+import { RoleService } from '../services/roleService.js';
 
 const router = Router();
 
-// Middleware to check auth for tus and restore original res.end (session middleware wraps it)
-const tusAuthCheck = (req: any, res: any, next: any) => {
+// SECURITY: Rate limiting for file operations to prevent abuse
+const fileUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // 50 uploads per 15 minutes per IP
+  message: { error: 'Too many file uploads, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const fileDownloadLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 100, // 100 downloads per minute per IP
+  message: { error: 'Too many download requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const fileDeleteLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 30, // 30 deletions per 5 minutes per IP
+  message: { error: 'Too many delete requests, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Middleware to check auth and permissions for tus, and restore original res.end (session middleware wraps it)
+const tusAuthCheck = async (req: any, res: any, next: any) => {
   if (!req.session?.user?.userId) {
     console.error('[tus route] Unauthorized upload attempt');
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  // SECURITY: Check if user has files.upload permission
+  try {
+    const hasPermission = await RoleService.userHasPermission(
+      req.session.user.userId,
+      'files.upload'
+    );
+
+    if (!hasPermission) {
+      console.error(`[tus route] User ${req.session.user.userId} lacks files.upload permission`);
+      return res.status(403).json({
+        error: 'File upload not permitted. Contact administrator for access.'
+      });
+    }
+  } catch (error) {
+    console.error('[tus route] Error checking permission:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 
   // CRITICAL: Restore the original res.end that was wrapped by express-session
@@ -27,37 +73,52 @@ const tusAuthCheck = (req: any, res: any, next: any) => {
 // HEAD /api/files/upload/:id - Check upload status
 // PATCH /api/files/upload/:id - Upload chunk
 // DELETE /api/files/upload/:id - Cancel upload (not exposed to frontend)
-router.all('/upload', tusAuthCheck, (req, res) => {
+// SECURITY: Apply rate limiting to uploads
+router.all('/upload', fileUploadLimiter, tusAuthCheck, (req, res) => {
   return tusServer.handle(req, res);
 });
 
-router.all('/upload/*', tusAuthCheck, (req, res) => {
+router.all('/upload/*', fileUploadLimiter, tusAuthCheck, (req, res) => {
   return tusServer.handle(req, res);
 });
 
 // All other routes require authentication
 router.use(requireAuth);
 
-// Get all files for a work (completed only)
+// Get all files for a work (completed only) - requires view access to work
 router.get('/work/:workId', async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const workId = parseInt(req.params.workId, 10);
 
-    const files = await FileStorageModel.findByWorkId(workId, userId);
+    // Check work access
+    const access = await WorkAccessService.checkAccess(userId, workId);
+    if (!access.canView) {
+      return res.status(403).json({ error: 'Cannot view this work' });
+    }
+
+    // Return ALL files for this work, not just user's
+    const files = await FileStorageModel.findByWorkIdWithAccess(workId);
     res.json(files);
   } catch (error) {
     next(error);
   }
 });
 
-// Get all files for a work (including in-progress) - for minimalistic inline progress
+// Get all files for a work (including in-progress) - requires view access to work
 router.get('/work/:workId/all', async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const workId = parseInt(req.params.workId, 10);
 
-    const files = await FileStorageModel.findAllByWorkId(workId, userId);
+    // Check work access
+    const access = await WorkAccessService.checkAccess(userId, workId);
+    if (!access.canView) {
+      return res.status(403).json({ error: 'Cannot view this work' });
+    }
+
+    // Return ALL files for this work, not just user's
+    const files = await FileStorageModel.findAllByWorkIdWithAccess(workId);
     res.json(files);
   } catch (error) {
     next(error);
@@ -82,7 +143,8 @@ router.get('/:fileId', async (req, res, next) => {
 });
 
 // Download file
-router.get('/:fileId/download', async (req, res, next) => {
+// SECURITY: Apply rate limiting to downloads
+router.get('/:fileId/download', fileDownloadLimiter, async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const fileId = parseInt(req.params.fileId, 10);
@@ -121,7 +183,8 @@ router.get('/:fileId/download', async (req, res, next) => {
 });
 
 // Delete file
-router.delete('/:fileId', async (req, res, next) => {
+// SECURITY: Apply rate limiting to deletions
+router.delete('/:fileId', fileDeleteLimiter, async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const fileId = parseInt(req.params.fileId, 10);
@@ -130,6 +193,18 @@ router.delete('/:fileId', async (req, res, next) => {
 
     // Get file to delete
     const file = await FileStorageModel.findById(fileId, userId);
+    if (!file) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    // SECURITY: Check if user has edit access to the work
+    const workAccess = await WorkAccessService.checkAccess(userId, file.work_id);
+    if (!workAccess.canEdit) {
+      return res.status(403).json({
+        error: 'Cannot delete this file. Edit permission required on the work.'
+      });
+    }
+
     if (file) {
       // Delete tus metadata (.info file) if it exists
       try {
@@ -158,7 +233,8 @@ router.delete('/:fileId', async (req, res, next) => {
 });
 
 // Cancel upload (delete tus upload, delete partial file, delete database entry)
-router.post('/:fileId/cancel', async (req, res, next) => {
+// SECURITY: Apply rate limiting to cancel operations
+router.post('/:fileId/cancel', fileDeleteLimiter, async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const fileId = parseInt(req.params.fileId, 10);
@@ -166,6 +242,14 @@ router.post('/:fileId/cancel', async (req, res, next) => {
     const file = await FileStorageModel.findById(fileId, userId);
     if (!file) {
       return res.status(404).json({ error: 'File not found' });
+    }
+
+    // SECURITY: Check if user has edit access to the work
+    const workAccess = await WorkAccessService.checkAccess(userId, file.work_id);
+    if (!workAccess.canEdit) {
+      return res.status(403).json({
+        error: 'Cannot cancel this file upload. Edit permission required on the work.'
+      });
     }
 
     console.log(`[Cancel] User ${userId} cancelling file ${fileId} (status: ${file.upload_status})`);
