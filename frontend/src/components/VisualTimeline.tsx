@@ -241,10 +241,7 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                       {item.entry.image_urls && item.entry.image_urls.length > 0 && (
                         <ImageGallery
                           imageKeys={item.entry.image_urls}
-                          entryId={item.entry.id}
-                          onImageDeleted={() => {
-                            // Refetch will be handled by parent
-                          }}
+                          // No entryId = no delete buttons (delete via edit modal only)
                         />
                       )}
                     </div>

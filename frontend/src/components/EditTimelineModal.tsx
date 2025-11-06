@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Paperclip } from 'lucide-react';
+import { X, Paperclip, Trash2 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { timelineApi } from '../services/api';
 import type { TimelineEntry } from '../types';
-import ImageGallery from './ImageGallery';
+import ImageLightbox from './ImageLightbox';
+import { FILE_SIZE_LIMITS, FILE_MESSAGES, validateImageFile } from '../config/fileConfig';
 
 interface EditTimelineModalProps {
   entry: TimelineEntry;
@@ -24,19 +25,21 @@ const ACTIVITY_TYPES = [
   'Other',
 ];
 
-const MAX_IMAGES = 9;
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_IMAGES = FILE_SIZE_LIMITS.MAX_NOTE_IMAGES;
 
 export default function EditTimelineModal({ entry, onClose, onSave }: EditTimelineModalProps) {
   const [label, setLabel] = useState(entry.label || '');
   const [activityType, setActivityType] = useState(entry.activity_type || '');
   const [imageKeys, setImageKeys] = useState<string[]>(entry.image_urls || []);
+  const [imagesToDelete, setImagesToDelete] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setLabel(entry.label || '');
     setActivityType(entry.activity_type || '');
     setImageKeys(entry.image_urls || []);
+    setImagesToDelete([]);
   }, [entry]);
 
   const uploadMutation = useMutation({
@@ -55,19 +58,16 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
 
     // Validate files
     const validFiles = files.filter(file => {
-      if (!file.type.startsWith('image/')) {
-        alert(`${file.name} is not an image`);
-        return false;
-      }
-      if (file.size > MAX_FILE_SIZE) {
-        alert(`${file.name} exceeds 5MB limit`);
+      const validation = validateImageFile(file);
+      if (!validation.valid) {
+        alert(validation.error);
         return false;
       }
       return true;
     });
 
     if (imageKeys.length + validFiles.length > MAX_IMAGES) {
-      alert(`Maximum ${MAX_IMAGES} images allowed`);
+      alert(FILE_MESSAGES.MAX_IMAGES_REACHED(MAX_IMAGES));
       return;
     }
 
@@ -75,15 +75,34 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
     e.target.value = ''; // Reset input
   };
 
-  const handleImageDeleted = (deletedKey: string) => {
-    setImageKeys(prev => prev.filter(key => key !== deletedKey));
+  // Mark image for deletion (staged until save)
+  const handleRemoveImage = (imageKey: string) => {
+    setImageKeys(prev => prev.filter(key => key !== imageKey));
+    setImagesToDelete(prev => [...prev, imageKey]);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Require at least label or images
-    if (!label.trim() && imageKeys.length === 0) return;
+    // Require at least label or images remaining (can't have completely empty entry)
+    if (!label.trim() && imageKeys.length === 0) {
+      alert('Timeline entry must have either text or images. To remove this entry completely, use the delete button.');
+      return;
+    }
+
+    // Delete removed images
+    if (imagesToDelete.length > 0) {
+      try {
+        await Promise.all(
+          imagesToDelete.map(imageKey =>
+            timelineApi.deleteImage(entry.id, imageKey)
+          )
+        );
+      } catch (error) {
+        console.error('Failed to delete some images:', error);
+        alert('Failed to delete some images. Changes to text will still be saved.');
+      }
+    }
 
     onSave({
       label: label.trim() || undefined,
@@ -154,11 +173,35 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
             </div>
 
             {imageKeys.length > 0 && (
-              <ImageGallery
-                imageKeys={imageKeys}
-                entryId={entry.id}
-                onImageDeleted={handleImageDeleted}
-              />
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                {imageKeys.map((imageKey, index) => (
+                  <div
+                    key={imageKey}
+                    className="relative group cursor-pointer overflow-hidden rounded-lg border border-dark-border bg-dark-surface aspect-square"
+                    onClick={() => setLightboxIndex(index)}
+                  >
+                    <img
+                      src={timelineApi.getImageUrl(imageKey)}
+                      alt={`Image ${index + 1}`}
+                      className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+                      loading="lazy"
+                    />
+                    {/* Remove button - changes staged until save */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemoveImage(imageKey);
+                      }}
+                      className="absolute top-1 right-1 w-6 h-6 bg-red-500 hover:bg-red-600 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                      title="Remove image (will delete on save)"
+                    >
+                      <Trash2 size={14} className="text-white" />
+                    </button>
+                    <div className="absolute inset-0 bg-black opacity-0 group-hover:opacity-10 transition-opacity pointer-events-none" />
+                  </div>
+                ))}
+              </div>
             )}
 
             {uploadMutation.isPending && (
@@ -178,6 +221,15 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
             />
           </div>
 
+          {/* Lightbox for image preview */}
+          {lightboxIndex !== null && (
+            <ImageLightbox
+              images={imageKeys.map(key => timelineApi.getImageUrl(key))}
+              initialIndex={lightboxIndex}
+              onClose={() => setLightboxIndex(null)}
+            />
+          )}
+
           <div className="flex justify-end space-x-2">
             <button
               type="button"
@@ -189,7 +241,7 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
             <button
               type="submit"
               className="btn btn-primary"
-              disabled={!label.trim() && imageKeys.length === 0}
+              disabled={!label.trim() && imageKeys.length === 0 && imagesToDelete.length === 0}
             >
               Save Changes
             </button>

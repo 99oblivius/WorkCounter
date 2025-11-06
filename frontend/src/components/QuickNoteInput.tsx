@@ -2,8 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Send, Tag, Paperclip } from 'lucide-react';
 import { timelineApi } from '../services/api';
+import { useUserPermissions } from '../hooks/useUserPermissions';
 import type { PendingImage } from '../types';
 import PendingImagePreview from './PendingImagePreview';
+import { FILE_SIZE_LIMITS, FILE_MESSAGES, validateImageFile } from '../config/fileConfig';
 
 interface QuickNoteInputProps {
   workId: number;
@@ -24,8 +26,7 @@ const ACTIVITY_TYPES = [
   'Other',
 ];
 
-const MAX_IMAGES = 9;
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_IMAGES = FILE_SIZE_LIMITS.MAX_NOTE_IMAGES;
 
 export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNoteInputProps) {
   const [note, setNote] = useState('');
@@ -34,6 +35,9 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Check user permissions for attachment uploads
+  const { can, limits } = useUserPermissions();
 
   const mutation = useMutation({
     mutationFn: async (data: { label?: string; activityType?: string; images: File[] }) => {
@@ -76,22 +80,24 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
   });
 
   const addPendingImages = (files: File[]) => {
+    // Check permission first
+    if (!can.uploadAttachments) {
+      return; // Silently ignore if no permission
+    }
+
     const validFiles = files.filter(file => {
-      // Validate file type
-      if (!file.type.startsWith('image/')) {
-        alert(`${file.name} is not an image file`);
-        return false;
-      }
-      // Validate file size
-      if (file.size > MAX_FILE_SIZE) {
-        alert(`${file.name} exceeds 5MB limit`);
+      // Validate with user-specific limits
+      const validation = validateImageFile(file, limits.maxImageSize);
+      if (!validation.valid) {
+        alert(validation.error);
         return false;
       }
       return true;
     });
 
-    if (pendingImages.length + validFiles.length > MAX_IMAGES) {
-      alert(`Maximum ${MAX_IMAGES} images allowed`);
+    const maxImages = limits.maxNoteImages || MAX_IMAGES;
+    if (pendingImages.length + validFiles.length > maxImages) {
+      alert(FILE_MESSAGES.MAX_IMAGES_REACHED(maxImages));
       return;
     }
 
@@ -126,6 +132,11 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
   };
 
   const handlePaste = (e: ClipboardEvent) => {
+    // Only enable paste if user has attachment permission
+    if (!can.uploadAttachments) {
+      return;
+    }
+
     const items = Array.from(e.clipboardData?.items || []);
     const imageFiles = items
       .filter(item => item.type.startsWith('image/'))
@@ -201,7 +212,11 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
             value={note}
             onChange={(e) => setNote(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="What are you working on right now?"
+            placeholder={
+              can.uploadAttachments
+                ? "What are you working on right now?"
+                : "What are you working on? (add a note)"
+            }
             className="input flex-1"
             disabled={mutation.isPending}
           />
@@ -213,15 +228,17 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
           >
             <Tag size={16} />
           </button>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={mutation.isPending || pendingImages.length >= MAX_IMAGES}
-            className="btn btn-secondary px-3"
-            title="Attach images (Ctrl+V to paste)"
-          >
-            <Paperclip size={16} />
-          </button>
+          {can.uploadAttachments && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={mutation.isPending || pendingImages.length >= (limits.maxNoteImages || MAX_IMAGES)}
+              className="btn btn-secondary px-3"
+              title={`Attach images (max ${limits.maxImageSizeFormatted} each)`}
+            >
+              <Paperclip size={16} />
+            </button>
+          )}
           <button
             type="submit"
             disabled={(!note.trim() && pendingImages.length === 0) || mutation.isPending}
@@ -299,7 +316,10 @@ export default function QuickNoteInput({ workId, sessionId, onSuccess }: QuickNo
       </form>
 
       <div className="mt-3 pt-3 border-t border-dark-border text-xs text-gray-600">
-        <span>Tip: Press Ctrl+V to paste screenshots • Ctrl+Enter to toggle activity type</span>
+        <span>
+          Tip: {can.uploadAttachments && 'Press Ctrl+V to paste screenshots • '}Ctrl+Enter to toggle activity type
+          {can.uploadAttachments && ` • Max ${limits.maxImageSizeFormatted} per image`}
+        </span>
       </div>
     </div>
   );
