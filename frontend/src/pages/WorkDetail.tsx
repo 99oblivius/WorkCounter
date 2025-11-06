@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download } from 'lucide-react';
+import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download, Share2, LogOut } from 'lucide-react';
 import { worksApi, sessionsApi, timelineApi, authApi } from '../services/api';
+import { workSharingApi } from '../services/adminApi';
 import { useTimer, formatDuration } from '../hooks/useTimer';
 import { useUploadWarning } from '../hooks/useUploadWarning';
+import { useWorkPermissions } from '../hooks/useWorkPermissions';
 import WorkForm from '../components/WorkForm';
 import TimelineForm from '../components/TimelineForm';
 import VisualTimeline from '../components/VisualTimeline';
 import QuickNoteInput from '../components/QuickNoteInput';
 import EditTimelineModal from '../components/EditTimelineModal';
 import FileStorageSection from '../components/FileStorageSection';
+import WorkSharingModal from '../components/WorkSharingModal';
 import type { TimeSession, TimelineEntry } from '../types';
 
 export default function WorkDetail() {
@@ -23,6 +26,10 @@ export default function WorkDetail() {
   const [showTimelineForm, setShowTimelineForm] = useState(false);
   const [scrollToSessionId, setScrollToSessionId] = useState<number | null>(null);
   const [editingEntry, setEditingEntry] = useState<TimelineEntry | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+
+  // Fetch work permissions for current user
+  const { permissions, isLoading: permissionsLoading } = useWorkPermissions(workId);
 
   // Warn user before leaving page if uploads are in progress
   useUploadWarning();
@@ -71,6 +78,15 @@ export default function WorkDetail() {
     },
   });
 
+  // Fetch work shares
+  const { data: sharesData } = useQuery({
+    queryKey: ['work-shares', workId],
+    queryFn: () => workSharingApi.getWorkShares(workId),
+    enabled: showShareModal, // Only fetch when modal is open
+  });
+
+  const shares = sharesData?.shares || [];
+
   const elapsed = useTimer(runningSession || null);
 
   const startMutation = useMutation({
@@ -91,6 +107,14 @@ export default function WorkDetail() {
   const deleteMutation = useMutation({
     mutationFn: () => worksApi.delete(workId),
     onSuccess: () => {
+      navigate('/dashboard');
+    },
+  });
+
+  const leaveMutation = useMutation({
+    mutationFn: () => workSharingApi.leaveSharedWork(workId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['works'] });
       navigate('/dashboard');
     },
   });
@@ -132,6 +156,12 @@ export default function WorkDetail() {
   const handleDelete = () => {
     if (window.confirm('Are you sure you want to delete this work? This action cannot be undone.')) {
       deleteMutation.mutate();
+    }
+  };
+
+  const handleLeave = () => {
+    if (window.confirm('Leave this shared work? You will no longer have access to it.')) {
+      leaveMutation.mutate();
     }
   };
 
@@ -269,7 +299,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
   const totalHours = stats ? stats.totalDuration / (1000 * 60 * 60) : 0;
   const estimatedEarnings = work?.hourly_rate ? totalHours * work.hourly_rate : null;
 
-  if (!work) {
+  if (!work || permissionsLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-gray-400">Loading...</div>
@@ -290,6 +320,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               <span>Back</span>
             </button>
             <div className="flex space-x-2">
+              {/* Export - Available to all with view access */}
               <div className="relative group">
                 <button className="btn btn-primary flex items-center space-x-2">
                   <Download size={16} />
@@ -310,20 +341,52 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                   </button>
                 </div>
               </div>
-              <button
-                onClick={() => setShowEditForm(true)}
-                className="btn btn-secondary flex items-center space-x-2"
-              >
-                <Edit size={16} />
-                <span>Edit</span>
-              </button>
-              <button
-                onClick={handleDelete}
-                className="btn btn-danger flex items-center space-x-2"
-              >
-                <Trash2 size={16} />
-                <span>Delete</span>
-              </button>
+
+              {/* Leave - Sharee only */}
+              {!permissions.isOwner && permissions.isShared && (
+                <button
+                  onClick={handleLeave}
+                  disabled={leaveMutation.isPending}
+                  className="btn btn-secondary flex items-center space-x-2"
+                  title="Remove yourself from this shared work"
+                >
+                  <LogOut size={16} />
+                  <span>Leave Shared Work</span>
+                </button>
+              )}
+
+              {/* Share - Owner only */}
+              {permissions.isOwner && (
+                <button
+                  onClick={() => setShowShareModal(true)}
+                  className="btn btn-secondary flex items-center space-x-2"
+                >
+                  <Share2 size={16} />
+                  <span>Share</span>
+                </button>
+              )}
+
+              {/* Edit - Owner only */}
+              {permissions.isOwner && (
+                <button
+                  onClick={() => setShowEditForm(true)}
+                  className="btn btn-secondary flex items-center space-x-2"
+                >
+                  <Edit size={16} />
+                  <span>Edit</span>
+                </button>
+              )}
+
+              {/* Delete - Owner only */}
+              {permissions.isOwner && (
+                <button
+                  onClick={handleDelete}
+                  className="btn btn-danger flex items-center space-x-2"
+                >
+                  <Trash2 size={16} />
+                  <span>Delete</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -361,23 +424,31 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 <p className="text-2xl font-mono font-bold text-gray-100">
                   {formatDuration(elapsed)}
                 </p>
-                <button
-                  onClick={handleStopTimer}
-                  className="btn btn-danger btn-sm flex items-center space-x-2 w-full justify-center"
-                >
-                  <Pause size={14} />
-                  <span>Stop</span>
-                </button>
+                {permissions.canEdit && (
+                  <button
+                    onClick={handleStopTimer}
+                    className="btn btn-danger btn-sm flex items-center space-x-2 w-full justify-center"
+                  >
+                    <Pause size={14} />
+                    <span>Stop</span>
+                  </button>
+                )}
               </div>
             ) : (
-              <button
-                onClick={handleStartTimer}
-                disabled={startMutation.isPending}
-                className="btn btn-primary btn-sm flex items-center space-x-2 w-full justify-center mt-2"
-              >
-                <Play size={14} />
-                <span>Start</span>
-              </button>
+              <>
+                {permissions.canEdit ? (
+                  <button
+                    onClick={handleStartTimer}
+                    disabled={startMutation.isPending}
+                    className="btn btn-primary btn-sm flex items-center space-x-2 w-full justify-center mt-2"
+                  >
+                    <Play size={14} />
+                    <span>Start</span>
+                  </button>
+                ) : (
+                  <p className="text-sm text-gray-500 mt-2">No active timer</p>
+                )}
+              </>
             )}
           </div>
 
@@ -427,15 +498,15 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               sessions={sessions}
               runningSession={runningSession || null}
               scrollToSessionId={scrollToSessionId}
-              onEditEntry={handleEditEntry}
-              onDeleteEntry={handleDeleteEntry}
+              onEditEntry={permissions.canEdit ? handleEditEntry : undefined}
+              onDeleteEntry={permissions.canEdit ? handleDeleteEntry : undefined}
             />
           </div>
 
           {/* Sidebar */}
           <div className="order-1 lg:order-2 space-y-6 h-full overflow-y-auto" style={{ minHeight: '500px' }}>
-            {/* Quick Note Input - Only for running sessions */}
-            {runningSession && (
+            {/* Quick Note Input - Only for running sessions and users with edit access */}
+            {runningSession && permissions.canEdit && (
               <QuickNoteInput
                 workId={workId}
                 sessionId={runningSession.id}
@@ -445,8 +516,8 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               />
             )}
 
-            {/* Alternative: Modal Form Button */}
-            {runningSession && (
+            {/* Alternative: Modal Form Button - Only for users with edit access */}
+            {runningSession && permissions.canEdit && (
               <button
                 onClick={() => setShowTimelineForm(true)}
                 className="btn btn-secondary w-full flex items-center justify-center space-x-2"
@@ -458,14 +529,14 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
 
             {/* File Storage Section */}
             {user && (
-              <FileStorageSection workId={workId} userId={user.userId} />
+              <FileStorageSection workId={workId} userId={user.userId} canEdit={permissions.canEdit} />
             )}
 
             {/* Session History */}
             <div className="card flex-1 flex flex-col">
               <h3 className="text-lg font-bold text-gray-100 mb-3">Sessions History</h3>
-              <div className="space-y-2 flex-1 overflow-y-auto">
-                {sessions.slice(0, 10).map((session: TimeSession) => (
+              <div className="space-y-2 overflow-y-auto max-h-96">
+                {sessions.map((session: TimeSession) => (
                   <div
                     key={session.id}
                     className="w-full bg-dark-bg border border-dark-border hover:border-gray-600 rounded p-2 text-xs transition-colors group relative"
@@ -488,7 +559,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                         </span>
                       </div>
                     </div>
-                    {!session.is_running && (
+                    {!session.is_running && permissions.canEdit && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -502,11 +573,6 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                     )}
                   </div>
                 ))}
-                {sessions.length > 10 && (
-                  <p className="text-xs text-gray-500 text-center pt-2">
-                    +{sessions.length - 10} more sessions (use dropdown to view all)
-                  </p>
-                )}
                 {sessions.length === 0 && (
                   <p className="text-gray-500 text-center py-4">No sessions yet. Start a timer to begin!</p>
                 )}
@@ -545,6 +611,14 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
           entry={editingEntry}
           onClose={() => setEditingEntry(null)}
           onSave={handleSaveEntry}
+        />
+      )}
+
+      {showShareModal && work && (
+        <WorkSharingModal
+          workId={workId}
+          shares={shares}
+          onClose={() => setShowShareModal(false)}
         />
       )}
     </div>

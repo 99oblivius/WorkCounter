@@ -1,29 +1,33 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { requireWorkAccess } from '../middleware/authorization.js';
 import { WorkModel } from '../models/Work.js';
 import { TimelineEntryModel } from '../models/TimelineEntry.js';
 import { FileStorageModel } from '../models/FileStorage.js';
 import { minioService } from '../services/minioService.js';
+import { WorkAccessCache } from '../services/cache/workAccessCache.js';
+import { WorkAccessService } from '../services/workAccessService.js';
 import '../types/index.js';
 
 const router = Router();
 
+// SECURITY: Comprehensive input validation with max lengths
 const createWorkSchema = z.object({
   title: z.string().min(1).max(255),
-  description: z.string().optional(),
+  description: z.string().max(10000).optional(),  // SECURITY FIX: Added max length
   clientName: z.string().max(255).optional(),
-  hourlyRate: z.number().positive().optional(),
-  tags: z.array(z.string()).optional(),
+  hourlyRate: z.number().positive().max(999999.99).optional(),  // SECURITY FIX: Max value
+  tags: z.array(z.string().max(100)).max(20).optional(),  // SECURITY FIX: Max tag length and count
 });
 
 const updateWorkSchema = z.object({
   title: z.string().min(1).max(255).optional(),
-  description: z.string().optional(),
+  description: z.string().max(10000).optional(),  // SECURITY FIX: Added max length
   clientName: z.string().max(255).optional(),
-  hourlyRate: z.number().positive().optional(),
+  hourlyRate: z.number().positive().max(999999.99).optional(),  // SECURITY FIX: Max value
   status: z.enum(['active', 'archived', 'completed']).optional(),
-  tags: z.array(z.string()).optional(),
+  tags: z.array(z.string().max(100)).max(20).optional(),  // SECURITY FIX: Max tag length and count
 });
 
 router.use(requireAuth);
@@ -46,18 +50,38 @@ router.get('/', async (req, res, next) => {
   }
 });
 
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', requireWorkAccess('view'), async (req, res, next) => {
   try {
-    const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
 
-    const work = await WorkModel.findById(id, userId);
+    // Authorization already checked by requireWorkAccess middleware
+    const work = await WorkModel.findByIdWithAccess(id);
 
     if (!work) {
       return res.status(404).json({ error: 'Work not found' });
     }
 
     res.json(work);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get work permissions for current user
+router.get('/:id/permissions', requireWorkAccess('view'), async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+    const workId = parseInt(req.params.id, 10);
+
+    const permissions = await WorkAccessService.checkAccess(userId, workId);
+
+    res.json({
+      canView: permissions.canView,
+      canEdit: permissions.canEdit,
+      canDelete: permissions.canDelete,
+      isOwner: permissions.isOwner,
+      isShared: permissions.isShared
+    });
   } catch (error) {
     next(error);
   }
@@ -79,11 +103,19 @@ router.post('/', async (req, res, next) => {
   }
 });
 
-router.patch('/:id', async (req, res, next) => {
+router.patch('/:id', requireWorkAccess('edit'), async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
     const data = updateWorkSchema.parse(req.body);
+
+    // Get work access to check if user is owner
+    const workAccess = (req as any).workAccess;
+
+    // Only owners can update works (even with edit access, sharees can't modify work metadata)
+    if (!workAccess.isOwner) {
+      return res.status(403).json({ error: 'Only the work owner can update work details' });
+    }
 
     // Convert camelCase to snake_case for database
     const updateData: any = {};
@@ -106,7 +138,7 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-router.delete('/:id', async (req, res, next) => {
+router.delete('/:id', requireWorkAccess('delete'), async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
@@ -163,6 +195,9 @@ router.delete('/:id', async (req, res, next) => {
     if (!deleted) {
       return res.status(404).json({ error: 'Work not found' });
     }
+
+    // SECURITY FIX: Invalidate work access cache to prevent stale access checks
+    WorkAccessCache.invalidateWork(id);
 
     console.log(`Work ${id} deleted successfully`);
     res.status(204).send();

@@ -10,6 +10,15 @@ export class WorkModel {
     return result.rows[0] || null;
   }
 
+  static async findByIdWithAccess(id: number): Promise<Work | null> {
+    // Used when authorization is already checked by middleware
+    const result = await query<Work>(
+      'SELECT * FROM works WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
   static async findByUserId(userId: number, status?: string): Promise<Work[]> {
     let sql = 'SELECT * FROM works WHERE user_id = $1';
     const params: any[] = [userId];
@@ -103,17 +112,37 @@ export class WorkModel {
   }
 
   static async search(userId: number, searchTerm: string): Promise<Work[]> {
+    // SECURITY: Validate and sanitize search input
+    if (!searchTerm || typeof searchTerm !== 'string') {
+      return [];
+    }
+
+    // Trim and limit length to prevent abuse
+    const sanitizedTerm = searchTerm.trim().substring(0, 200);
+
+    if (sanitizedTerm.length === 0) {
+      return [];
+    }
+
+    // SECURITY: Escape LIKE wildcards to prevent SQL injection via LIKE patterns
+    // Replace % and _ with escaped versions since these are special LIKE characters
+    const escapedForLike = sanitizedTerm
+      .replace(/\\/g, '\\\\')  // Escape backslash first
+      .replace(/%/g, '\\%')    // Escape % wildcard
+      .replace(/_/g, '\\_');   // Escape _ wildcard
+
+    // Use parameterized query with escaped search term
     const result = await query<Work>(
       `SELECT * FROM works
        WHERE user_id = $1
        AND (
-         title ILIKE $2
-         OR description ILIKE $2
-         OR client_name ILIKE $2
+         title ILIKE $2 ESCAPE '\\'
+         OR description ILIKE $2 ESCAPE '\\'
+         OR client_name ILIKE $2 ESCAPE '\\'
          OR $3 = ANY(tags)
        )
        ORDER BY updated_at DESC`,
-      [userId, `%${searchTerm}%`, searchTerm]
+      [userId, `%${escapedForLike}%`, sanitizedTerm]
     );
     return result.rows;
   }
