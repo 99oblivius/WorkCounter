@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download, Share2, LogOut } from 'lucide-react';
@@ -68,12 +68,22 @@ export default function WorkDetail() {
     enabled: false, // Don't fetch - data comes from SSE
   });
 
-  const { data: sharesData } = useQuery<{ shares: any[] }>({
+  const { data: sharesData, refetch: refetchShares } = useQuery<{ shares: any[] }>({
     queryKey: ['work-shares', workId],
     enabled: false, // Don't fetch - data comes from SSE
+    queryFn: async () => {
+      return await workSharingApi.getWorkShares(workId);
+    },
   });
 
   const shares = sharesData?.shares || [];
+
+  // Refetch shares when opening the modal
+  useEffect(() => {
+    if (showShareModal && permissions.isOwner) {
+      refetchShares();
+    }
+  }, [showShareModal, permissions.isOwner, refetchShares]);
   const runningSession = sessions.find((s) => s.is_running);
 
   const elapsed = useTimer(runningSession || null);

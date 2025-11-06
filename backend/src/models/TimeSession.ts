@@ -138,6 +138,58 @@ export class TimeSessionModel {
     return (result.rowCount ?? 0) > 0;
   }
 
+  /**
+   * Update session without user filtering (for work-level permission checks)
+   * SECURITY: Only use after verifying work-level canEdit permission
+   */
+  static async updateWithoutUserFilter(
+    id: number,
+    data: { startTime?: Date; endTime?: Date }
+  ): Promise<TimeSession | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramCount = 1;
+
+    if (data.startTime !== undefined) {
+      fields.push(`start_time = $${paramCount++}`);
+      values.push(data.startTime);
+    }
+    if (data.endTime !== undefined) {
+      fields.push(`end_time = $${paramCount++}`);
+      values.push(data.endTime);
+      fields.push(`duration_ms = EXTRACT(EPOCH FROM ($${paramCount - 1} - start_time)) * 1000`);
+      fields.push(`is_running = false`);
+    }
+
+    if (fields.length === 0) {
+      // No fields to update, return existing session
+      return await this.findByIdWithAccess(id);
+    }
+
+    values.push(id);
+
+    const result = await query<TimeSession>(
+      `UPDATE time_sessions
+       SET ${fields.join(', ')}
+       WHERE id = $${paramCount}
+       RETURNING *`,
+      values
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Delete session without user filtering (for work-level permission checks)
+   * SECURITY: Only use after verifying work-level canEdit permission
+   */
+  static async deleteWithoutUserFilter(id: number): Promise<boolean> {
+    const result = await query(
+      'DELETE FROM time_sessions WHERE id = $1',
+      [id]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   static async getTotalDuration(workId: number, userId: number): Promise<number> {
     const result = await query<{ total: string }>(
       `SELECT COALESCE(SUM(duration_ms), 0) as total

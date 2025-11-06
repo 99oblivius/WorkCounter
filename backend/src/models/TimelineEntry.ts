@@ -125,6 +125,68 @@ export class TimelineEntryModel {
     return (result.rowCount ?? 0) > 0;
   }
 
+  /**
+   * Update timeline entry without user filtering (for work-level permission checks)
+   * SECURITY: Only use after verifying work-level canEdit permission
+   */
+  static async updateWithoutUserFilter(
+    id: number,
+    data: Partial<Pick<TimelineEntry, 'timestamp' | 'label'>> & { activity_type?: string | null; image_urls?: string[] | null }
+  ): Promise<TimelineEntry | null> {
+    const fields: string[] = [];
+    const values: any[] = [];
+    let paramCount = 1;
+
+    if (data.timestamp !== undefined) {
+      fields.push(`timestamp = $${paramCount++}`);
+      values.push(data.timestamp);
+    }
+    if (data.label !== undefined) {
+      fields.push(`label = $${paramCount++}`);
+      values.push(data.label);
+    }
+    if (data.activity_type !== undefined) {
+      fields.push(`activity_type = $${paramCount++}`);
+      values.push(data.activity_type);
+    }
+    if (data.image_urls !== undefined) {
+      fields.push(`image_urls = $${paramCount++}`);
+      values.push(data.image_urls);
+    }
+
+    if (fields.length === 0) {
+      // No fields to update, fetch and return existing entry
+      const result = await query<TimelineEntry>(
+        'SELECT * FROM timeline_entries WHERE id = $1',
+        [id]
+      );
+      return result.rows[0] || null;
+    }
+
+    values.push(id);
+
+    const result = await query<TimelineEntry>(
+      `UPDATE timeline_entries
+       SET ${fields.join(', ')}
+       WHERE id = $${paramCount}
+       RETURNING *`,
+      values
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Delete timeline entry without user filtering (for work-level permission checks)
+   * SECURITY: Only use after verifying work-level canEdit permission
+   */
+  static async deleteWithoutUserFilter(id: number): Promise<boolean> {
+    const result = await query(
+      'DELETE FROM timeline_entries WHERE id = $1',
+      [id]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   static async getByActivityType(
     workId: number,
     userId: number,

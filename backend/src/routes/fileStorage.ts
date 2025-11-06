@@ -192,8 +192,8 @@ router.delete('/:fileId', fileDeleteLimiter, async (req, res, next) => {
 
     console.log(`[Delete] User ${userId} deleting file ${fileId}`);
 
-    // Get file to delete
-    const file = await FileStorageModel.findById(fileId, userId);
+    // Get file to delete (without user filtering to support shared works)
+    const file = await FileStorageModel.findByIdWithoutUserFilter(fileId);
     if (!file) {
       return res.status(404).json({ error: 'File not found' });
     }
@@ -222,7 +222,8 @@ router.delete('/:fileId', fileDeleteLimiter, async (req, res, next) => {
       }
 
       // Delete from database
-      await FileStorageModel.delete(fileId, userId);
+      // Use WithoutUserFilter since we already verified work-level permissions
+      await FileStorageModel.deleteWithoutUserFilter(fileId);
       console.log(`[Delete] Removed from database: ${fileId}`);
 
       // Emit SSE event for real-time updates
@@ -243,7 +244,8 @@ router.post('/:fileId/cancel', fileDeleteLimiter, async (req, res, next) => {
     const userId = req.session.user!.userId;
     const fileId = parseInt(req.params.fileId, 10);
 
-    const file = await FileStorageModel.findById(fileId, userId);
+    // Get file (without user filtering to support shared works)
+    const file = await FileStorageModel.findByIdWithoutUserFilter(fileId);
     if (!file) {
       return res.status(404).json({ error: 'File not found' });
     }
@@ -279,7 +281,8 @@ router.post('/:fileId/cancel', fileDeleteLimiter, async (req, res, next) => {
     }
 
     // 3. Delete from database
-    await FileStorageModel.delete(fileId, userId);
+    // Use WithoutUserFilter since we already verified work-level permissions
+    await FileStorageModel.deleteWithoutUserFilter(fileId);
     console.log(`[Cancel] Removed from database: ${fileId}`);
 
     res.status(204).send();

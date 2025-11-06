@@ -219,7 +219,7 @@ export default function FileStorageSection({ workId, userId, canEdit = true }: F
         </div>
       )}
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-bold text-gray-100">Attached Files</h3>
+        <h3 className="text-lg font-bold text-gray-100">Documents</h3>
 
         {canUpload && (
           <>

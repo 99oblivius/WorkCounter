@@ -106,10 +106,12 @@ export const tusServer = new Server({
       console.log(`[tus] Upload completed: ${fileId} - ${upload.metadata!.displayName}`);
 
       // Emit SSE event for real-time updates
-      const workId = parseInt(upload.metadata!.workId as string, 10);
-      const file = await FileStorageModel.findById(fileId, parseInt(upload.metadata!.userId as string, 10));
+      const file = await FileStorageModel.findByIdWithoutUserFilter(fileId);
       if (file) {
-        await sseService.emitWorkUpdate(workId, 'file:upload', file);
+        await sseService.emitWorkUpdate(file.work_id, 'file:upload', file);
+        console.log(`[tus] SSE event emitted for file ${fileId} on work ${file.work_id}`);
+      } else {
+        console.error(`[tus] Could not find file ${fileId} to emit SSE event`);
       }
 
       return { body: '' };

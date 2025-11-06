@@ -53,8 +53,8 @@ router.get(
         permissions,
         shares,
       ] = await Promise.all([
-        // Work metadata
-        WorkModel.findById(workId, userId),
+        // Work metadata (use WithAccess since we already checked permissions)
+        WorkModel.findByIdWithAccess(workId),
 
         // Sessions (use WithAccess since we already checked permissions)
         TimeSessionModel.findByWorkIdWithAccess(workId),
@@ -62,8 +62,8 @@ router.get(
         // Timeline entries (use WithAccess since we already checked permissions)
         TimelineEntryModel.findByWorkIdWithAccess(workId),
 
-        // Files (requires userId for ownership check)
-        FileStorageModel.findByWorkId(workId, userId),
+        // Files (use WithAccess since we already checked permissions)
+        FileStorageModel.findByWorkIdWithAccess(workId),
 
         // Stats
         TimeSessionModel.getTotalDurationWithAccess(workId),

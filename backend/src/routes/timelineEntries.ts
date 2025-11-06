@@ -137,7 +137,8 @@ router.patch('/:id', async (req, res, next) => {
       });
     }
 
-    const entry = await TimelineEntryModel.update(id, userId, {
+    // Use WithoutUserFilter since we already verified work-level permissions
+    const entry = await TimelineEntryModel.updateWithoutUserFilter(id, {
       timestamp: data.timestamp ? new Date(data.timestamp) : undefined,
       label: data.label === null ? undefined : data.label,
       activity_type: data.activityType,
@@ -180,7 +181,8 @@ router.delete('/:id', async (req, res, next) => {
       await minioService.deleteFiles(entry.image_urls);
     }
 
-    const deleted = await TimelineEntryModel.delete(id, userId);
+    // Use WithoutUserFilter since we already verified work-level permissions
+    const deleted = await TimelineEntryModel.deleteWithoutUserFilter(id);
 
     if (!deleted) {
       return res.status(404).json({ error: 'Timeline entry not found' });
@@ -254,8 +256,9 @@ router.post('/:id/images', checkAttachmentUploadPermission, uploadImages, async 
     }
 
     // Update entry with new image URLs
+    // Use WithoutUserFilter since we already verified work-level permissions
     const updatedImageUrls = [...(entry.image_urls || []), ...imageUrls];
-    const updatedEntry = await TimelineEntryModel.update(id, userId, {
+    const updatedEntry = await TimelineEntryModel.updateWithoutUserFilter(id, {
       image_urls: updatedImageUrls,
     });
 
@@ -298,8 +301,9 @@ router.delete('/:id/images/:imageKey(*)', async (req, res, next) => {
     await minioService.deleteFile(imageKey);
 
     // Update entry to remove image URL
+    // Use WithoutUserFilter since we already verified work-level permissions
     const updatedImageUrls = entry.image_urls.filter(url => url !== imageKey);
-    const updatedEntry = await TimelineEntryModel.update(id, userId, {
+    const updatedEntry = await TimelineEntryModel.updateWithoutUserFilter(id, {
       image_urls: updatedImageUrls.length > 0 ? updatedImageUrls : null,
     });
 

@@ -161,7 +161,8 @@ router.patch('/:id', async (req, res, next) => {
       });
     }
 
-    const session = await TimeSessionModel.update(id, userId, {
+    // Use WithoutUserFilter since we already verified work-level permissions
+    const session = await TimeSessionModel.updateWithoutUserFilter(id, {
       startTime: data.startTime ? new Date(data.startTime) : undefined,
       endTime: data.endTime ? new Date(data.endTime) : undefined,
     });
@@ -179,34 +180,26 @@ router.patch('/:id', async (req, res, next) => {
   }
 });
 
-// Delete a session - must own the session
-router.delete('/:id', requireResourceOwnership('session'), async (req, res, next) => {
+// Delete a session - requires edit permission on work
+router.delete('/:id', async (req, res, next) => {
   try {
     const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
 
     console.log(`Deleting session ${id} for user ${userId}`);
 
-    // Get session data before deleting (need workId for SSE)
+    // Get session data before deleting (need workId for SSE and permission check)
     const sessionToDelete = await TimeSessionModel.findByIdWithAccess(id);
 
-    // Handle race condition: session might have been deleted by another tab/user
     if (!sessionToDelete) {
-      // If ownership check failed and session doesn't exist, it was likely deleted already
-      if ((req as any).ownershipCheckFailed) {
-        console.log(`[Delete] Session ${id} already deleted (race condition)`);
-        return res.status(404).json({
-          error: 'Session not found',
-          detail: 'This session may have already been deleted'
-        });
-      }
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    // If ownership check failed but session exists, user doesn't own it
-    if ((req as any).ownershipCheckFailed) {
+    // SECURITY: Check if user has edit access to the work
+    const workAccess = await WorkAccessService.checkAccess(userId, sessionToDelete.work_id);
+    if (!workAccess.canEdit) {
       return res.status(403).json({
-        error: 'You can only delete sessions you created'
+        error: 'Cannot delete this session. Edit permission required on the work.'
       });
     }
 
@@ -235,7 +228,8 @@ router.delete('/:id', requireResourceOwnership('session'), async (req, res, next
     }
 
     // Delete the session (cascade will delete timeline entries)
-    const deleted = await TimeSessionModel.delete(id, userId);
+    // Use WithoutUserFilter since we already verified work-level permissions
+    const deleted = await TimeSessionModel.deleteWithoutUserFilter(id);
 
     if (!deleted) {
       return res.status(404).json({ error: 'Session not found' });

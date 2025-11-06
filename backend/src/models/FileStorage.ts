@@ -187,6 +187,18 @@ export class FileStorageModel {
   }
 
   /**
+   * Get file by ID without user filtering (for internal operations like SSE broadcasting)
+   */
+  static async findByIdWithoutUserFilter(fileId: number): Promise<FileStorageRecord | null> {
+    const result = await query<FileStorageRecord>(
+      `SELECT * FROM file_storage
+       WHERE id = $1`,
+      [fileId]
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
    * Get file by tus ID (for tus hooks)
    */
   static async findByTusId(tusId: string): Promise<FileStorageRecord | null> {
@@ -206,6 +218,19 @@ export class FileStorageModel {
       `DELETE FROM file_storage
        WHERE id = $1 AND user_id = $2`,
       [fileId, userId]
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Delete file without user filtering (for work-level permission checks)
+   * SECURITY: Only use after verifying work-level canEdit permission
+   */
+  static async deleteWithoutUserFilter(fileId: number): Promise<boolean> {
+    const result = await query(
+      `DELETE FROM file_storage
+       WHERE id = $1`,
+      [fileId]
     );
     return (result.rowCount ?? 0) > 0;
   }
