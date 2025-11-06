@@ -8,6 +8,7 @@ import { FileStorageModel } from '../models/FileStorage.js';
 import { minioService } from '../services/minioService.js';
 import { WorkAccessCache } from '../services/cache/workAccessCache.js';
 import { WorkAccessService } from '../services/workAccessService.js';
+import { sseService } from '../services/sseService.js';
 import '../types/index.js';
 
 const router = Router();
@@ -131,6 +132,9 @@ router.patch('/:id', requireWorkAccess('edit'), async (req, res, next) => {
     if (!work) {
       return res.status(404).json({ error: 'Work not found' });
     }
+
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(id, 'work:update', work);
 
     res.json(work);
   } catch (error) {

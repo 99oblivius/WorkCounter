@@ -60,4 +60,29 @@
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
   }
+
+  /* Smooth skeleton loading with fade-in */
+  @keyframes skeleton-fade {
+    0% {
+      opacity: 0.4;
+    }
+    50% {
+      opacity: 0.7;
+    }
+    100% {
+      opacity: 0.4;
+    }
+  }
+
+  .animate-pulse {
+    animation: skeleton-fade 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* View Transitions API support */
+  @supports (view-transition-name: none) {
+    ::view-transition-old(root),
+    ::view-transition-new(root) {
+      animation-duration: 0.3s;
+    }
+  }
 }

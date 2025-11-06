@@ -6,6 +6,7 @@ import { WorkAccessService } from '../services/workAccessService.js';
 import { minioService } from '../services/minioService.js';
 import { tusServer } from '../services/tusService.js';
 import { RoleService } from '../services/roleService.js';
+import { sseService } from '../services/sseService.js';
 
 const router = Router();
 
@@ -223,6 +224,9 @@ router.delete('/:fileId', fileDeleteLimiter, async (req, res, next) => {
       // Delete from database
       await FileStorageModel.delete(fileId, userId);
       console.log(`[Delete] Removed from database: ${fileId}`);
+
+      // Emit SSE event for real-time updates
+      await sseService.emitWorkUpdate(file.work_id, 'file:delete', { id: fileId });
     }
 
     res.status(204).send();

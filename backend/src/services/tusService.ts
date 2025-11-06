@@ -5,6 +5,7 @@ import type { ServerRequest } from 'srvx';
 import { env } from '../config/env.js';
 import { FileStorageModel } from '../models/FileStorage.js';
 import { FILE_SIZE_LIMITS } from '../config/fileConfig.js';
+import { sseService } from './sseService.js';
 import crypto from 'crypto';
 
 export const tusServer = new Server({
@@ -103,6 +104,13 @@ export const tusServer = new Server({
       await FileStorageModel.complete(fileId);
 
       console.log(`[tus] Upload completed: ${fileId} - ${upload.metadata!.displayName}`);
+
+      // Emit SSE event for real-time updates
+      const workId = parseInt(upload.metadata!.workId as string, 10);
+      const file = await FileStorageModel.findById(fileId, parseInt(upload.metadata!.userId as string, 10));
+      if (file) {
+        await sseService.emitWorkUpdate(workId, 'file:upload', file);
+      }
 
       return { body: '' };
     } catch (error) {

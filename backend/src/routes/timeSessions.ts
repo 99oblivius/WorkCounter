@@ -7,6 +7,7 @@ import { WorkModel } from '../models/Work.js';
 import { WorkAccessService } from '../services/workAccessService.js';
 import { TimelineEntryModel } from '../models/TimelineEntry.js';
 import { minioService } from '../services/minioService.js';
+import { sseService } from '../services/sseService.js';
 import '../types/index.js';
 
 const router = Router();
@@ -97,6 +98,9 @@ router.post('/start', async (req, res, next) => {
       startTime: new Date(),
     });
 
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(workId, 'session:start', session);
+
     res.status(201).json(session);
   } catch (error) {
     next(error);
@@ -127,6 +131,10 @@ router.post('/:id/stop', async (req, res, next) => {
     }
 
     const stoppedSession = await TimeSessionModel.stopWithAccess(id, new Date());
+
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(session.work_id, 'session:stop', stoppedSession);
+
     res.json(stoppedSession);
   } catch (error) {
     next(error);
@@ -162,6 +170,9 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(existingSession.work_id, 'session:update', session);
+
     res.json(session);
   } catch (error) {
     next(error);
@@ -175,6 +186,29 @@ router.delete('/:id', requireResourceOwnership('session'), async (req, res, next
     const id = parseInt(req.params.id, 10);
 
     console.log(`Deleting session ${id} for user ${userId}`);
+
+    // Get session data before deleting (need workId for SSE)
+    const sessionToDelete = await TimeSessionModel.findByIdWithAccess(id);
+
+    // Handle race condition: session might have been deleted by another tab/user
+    if (!sessionToDelete) {
+      // If ownership check failed and session doesn't exist, it was likely deleted already
+      if ((req as any).ownershipCheckFailed) {
+        console.log(`[Delete] Session ${id} already deleted (race condition)`);
+        return res.status(404).json({
+          error: 'Session not found',
+          detail: 'This session may have already been deleted'
+        });
+      }
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    // If ownership check failed but session exists, user doesn't own it
+    if ((req as any).ownershipCheckFailed) {
+      return res.status(403).json({
+        error: 'You can only delete sessions you created'
+      });
+    }
 
     // Get all timeline entries for this session to clean up images
     const entries = await TimelineEntryModel.findBySessionIdWithAccess(id);
@@ -206,6 +240,9 @@ router.delete('/:id', requireResourceOwnership('session'), async (req, res, next
     if (!deleted) {
       return res.status(404).json({ error: 'Session not found' });
     }
+
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(sessionToDelete.work_id, 'session:delete', { id });
 
     console.log(`Session ${id} deleted successfully`);
     res.status(204).send();

@@ -4,6 +4,7 @@ import { requireWorkAccess, requireWorkOwnership } from '../middleware/authoriza
 import { requirePermission } from '../middleware/rbac.js';
 import { WorkAccessService } from '../services/workAccessService.js';
 import { AuditService } from '../services/auditService.js';
+import { sseService } from '../services/sseService.js';
 import type { AuthenticatedRequest } from '../middleware/rbac.js';
 
 const router = Router();
@@ -83,6 +84,10 @@ router.post(
         userAgent: req.get('user-agent')
       });
 
+      // Emit SSE event for real-time updates
+      const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
+      await sseService.emitWorkUpdate(workId, 'share:add', { shares });
+
       res.json({ success: true });
     } catch (error: any) {
       console.error('Error sharing work:', error);
@@ -145,6 +150,10 @@ router.delete(
         ipAddress: req.ip,
         userAgent: req.get('user-agent')
       });
+
+      // Emit SSE event for real-time updates
+      const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
+      await sseService.emitWorkUpdate(workId, 'share:remove', { shares });
 
       res.json({ success: true });
     } catch (error: any) {

@@ -12,6 +12,7 @@ import './types/index.js';
 
 import authRoutes from './routes/auth.js';
 import worksRoutes from './routes/works.js';
+import workStreamRoutes from './routes/workStream.js';
 import timeSessionsRoutes from './routes/timeSessions.js';
 import timelineEntriesRoutes from './routes/timelineEntries.js';
 import statsRoutes from './routes/stats.js';
@@ -23,6 +24,7 @@ import adminUsersRoutes from './routes/admin/users.js';
 import adminSettingsRoutes from './routes/admin/settings.js';
 import adminAuditRoutes from './routes/admin/audit.js';
 import adminRolesRoutes from './routes/admin/roles.js';
+import { sseService } from './services/sseService.js';
 
 const app = express();
 
@@ -77,6 +79,9 @@ const redisStore = new RedisStore({
   prefix: 'workcounter:sess:',
 });
 
+// Initialize SSE service for real-time updates
+await sseService.initialize();
+
 // Middleware to save original res.end before session wraps it (for tus compatibility)
 app.use((req, res, next) => {
   (res as any)._originalEnd = res.end;
@@ -106,6 +111,8 @@ app.use(
 app.use(csrfProtection);
 
 app.use('/api/auth', authRoutes);
+// SSE endpoint for real-time work updates (MUST be registered before /api/works to avoid route conflicts)
+app.use('/api/works', workStreamRoutes);
 app.use('/api/works', worksRoutes);
 app.use('/api/sessions', timeSessionsRoutes);
 app.use('/api/timeline', timelineEntriesRoutes);
@@ -164,12 +171,14 @@ async function startServer() {
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
+  await sseService.shutdown();
   await pool.end();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
+  await sseService.shutdown();
   await pool.end();
   process.exit(0);
 });

@@ -79,9 +79,9 @@ export const requireResourceOwnership = (
         );
 
         if (!hasAdminAccess) {
-          return res.status(403).json({
-            error: 'You can only modify resources you created'
-          });
+          // FIX: Pass ownership check failure to route handler
+          // Route handler can distinguish between "doesn't exist" vs "not owned"
+          (req as any).ownershipCheckFailed = true;
         }
       }
 

@@ -7,6 +7,7 @@ import { workSharingApi } from '../services/adminApi';
 import { useTimer, formatDuration } from '../hooks/useTimer';
 import { useUploadWarning } from '../hooks/useUploadWarning';
 import { useWorkPermissions } from '../hooks/useWorkPermissions';
+import { useWorkStream } from '../hooks/useWorkStream';
 import WorkForm from '../components/WorkForm';
 import TimelineForm from '../components/TimelineForm';
 import VisualTimeline from '../components/VisualTimeline';
@@ -34,22 +35,10 @@ export default function WorkDetail() {
   // Warn user before leaving page if uploads are in progress
   useUploadWarning();
 
-  const { data: work } = useQuery({
-    queryKey: ['works', workId],
-    queryFn: async () => {
-      const response = await worksApi.getById(workId);
-      return response.data;
-    },
-  });
+  // SSE connection for real-time updates - replaces all polling
+  const { initialData } = useWorkStream(workId);
 
-  const { data: sessions = [] } = useQuery({
-    queryKey: ['sessions', 'work', workId],
-    queryFn: async () => {
-      const response = await sessionsApi.getByWorkId(workId);
-      return response.data;
-    },
-  });
-
+  // User query (not work-specific, so keep separate)
   const { data: user } = useQuery({
     queryKey: ['user'],
     queryFn: async () => {
@@ -58,34 +47,34 @@ export default function WorkDetail() {
     },
   });
 
-  const runningSession = sessions.find((s: TimeSession) => s.is_running);
+  // Get data from React Query cache (populated by SSE)
+  const { data: work } = useQuery<any>({
+    queryKey: ['works', workId],
+    enabled: false, // Don't fetch - data comes from SSE
+  });
 
-  // Fetch ALL timeline entries for this work across all sessions
-  const { data: timelineEntries = [] } = useQuery({
+  const { data: sessions = [] } = useQuery<TimeSession[]>({
+    queryKey: ['sessions', 'work', workId],
+    enabled: false, // Don't fetch - data comes from SSE
+  });
+
+  const { data: timelineEntries = [] } = useQuery<TimelineEntry[]>({
     queryKey: ['timeline', 'work', workId],
-    queryFn: async () => {
-      const response = await timelineApi.getByWorkId(workId);
-      return response.data;
-    },
-    refetchInterval: runningSession ? 3000 : false, // Auto-refresh when any session is running
+    enabled: false, // Don't fetch - data comes from SSE
   });
 
-  const { data: stats } = useQuery({
+  const { data: stats } = useQuery<{ totalDuration: number }>({
     queryKey: ['sessions', 'stats', workId],
-    queryFn: async () => {
-      const response = await sessionsApi.getStats(workId);
-      return response.data;
-    },
+    enabled: false, // Don't fetch - data comes from SSE
   });
 
-  // Fetch work shares
-  const { data: sharesData } = useQuery({
+  const { data: sharesData } = useQuery<{ shares: any[] }>({
     queryKey: ['work-shares', workId],
-    queryFn: () => workSharingApi.getWorkShares(workId),
-    enabled: showShareModal, // Only fetch when modal is open
+    enabled: false, // Don't fetch - data comes from SSE
   });
 
   const shares = sharesData?.shares || [];
+  const runningSession = sessions.find((s) => s.is_running);
 
   const elapsed = useTimer(runningSession || null);
 
@@ -133,6 +122,15 @@ export default function WorkDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['timeline'] });
     },
+    onError: (error: any) => {
+      // Gracefully handle race conditions (entry already deleted)
+      if (error.response?.status === 404) {
+        console.log('[Delete] Timeline entry already deleted, refreshing UI');
+        queryClient.invalidateQueries({ queryKey: ['timeline'] });
+      } else {
+        alert(error.response?.data?.error || 'Failed to delete timeline entry');
+      }
+    },
   });
 
   const deleteSessionMutation = useMutation({
@@ -140,6 +138,16 @@ export default function WorkDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       queryClient.invalidateQueries({ queryKey: ['timeline'] });
+    },
+    onError: (error: any) => {
+      // Gracefully handle race conditions (session already deleted)
+      if (error.response?.status === 404) {
+        console.log('[Delete] Session already deleted, refreshing UI');
+        // Just refresh - SSE already removed it from cache
+        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      } else {
+        alert(error.response?.data?.error || 'Failed to delete session');
+      }
     },
   });
 
@@ -299,13 +307,8 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
   const totalHours = stats ? stats.totalDuration / (1000 * 60 * 60) : 0;
   const estimatedEarnings = work?.hourly_rate ? totalHours * work.hourly_rate : null;
 
-  if (!work || permissionsLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-gray-400">Loading...</div>
-      </div>
-    );
-  }
+  // Loading state for permissions only (fast, doesn't block UI)
+  const isLoading = !initialData || permissionsLoading;
 
   return (
     <div className="h-screen bg-dark-bg flex flex-col overflow-hidden">
@@ -395,21 +398,30 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
       <main className="flex-1 overflow-auto flex flex-col">
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 flex flex-col w-full">
         <div className="mb-6 flex-shrink-0">
-          <h1 className="text-3xl font-bold text-gray-100 mb-2">{work.title}</h1>
-          {work.client_name && (
-            <p className="text-gray-400">Client: {work.client_name}</p>
-          )}
-          {work.description && (
-            <p className="text-gray-500 mt-2">{work.description}</p>
-          )}
-          {work.tags && work.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-3">
-              {work.tags.map((tag, i) => (
-                <span key={i} className="text-sm bg-dark-border px-3 py-1 rounded text-gray-400">
-                  {tag}
-                </span>
-              ))}
-            </div>
+          {isLoading ? (
+            <>
+              <div className="h-9 bg-dark-border/50 rounded animate-pulse w-96 mb-2"></div>
+              <div className="h-5 bg-dark-border/50 rounded animate-pulse w-64"></div>
+            </>
+          ) : (
+            <>
+              <h1 className="text-3xl font-bold text-gray-100 mb-2">{work?.title}</h1>
+              {work?.client_name && (
+                <p className="text-gray-400">Client: {work.client_name}</p>
+              )}
+              {work?.description && (
+                <p className="text-gray-500 mt-2">{work.description}</p>
+              )}
+              {work?.tags && work.tags.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {work.tags.map((tag: string, i: number) => (
+                    <span key={i} className="text-sm bg-dark-border px-3 py-1 rounded text-gray-400">
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -457,26 +469,44 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               <Clock className="text-blue-500" size={20} />
               <span className="text-sm text-gray-400">Total Time</span>
             </div>
-            <p className="text-2xl font-bold text-gray-100">
-              {formatDuration(stats?.totalDuration || 0)}
-            </p>
-            <p className="text-sm text-gray-500 mt-1">
-              {totalHours.toFixed(2)} hours
-            </p>
+            {isLoading ? (
+              <>
+                <div className="h-8 bg-dark-border/50 rounded animate-pulse w-32 mb-2"></div>
+                <div className="h-4 bg-dark-border/50 rounded animate-pulse w-20"></div>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-bold text-gray-100">
+                  {formatDuration(stats?.totalDuration || 0)}
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  {totalHours.toFixed(2)} hours
+                </p>
+              </>
+            )}
           </div>
 
-          {work.hourly_rate && (
+          {(work?.hourly_rate || isLoading) && (
             <div className="card">
               <div className="flex items-center space-x-3 mb-2">
                 <DollarSign className="text-green-500" size={20} />
                 <span className="text-sm text-gray-400">Estimated Earnings</span>
               </div>
-              <p className="text-2xl font-bold text-gray-100">
-                ${estimatedEarnings?.toFixed(2) || '0.00'}
-              </p>
-              <p className="text-sm text-gray-500 mt-1">
-                ${work.hourly_rate}/hour
-              </p>
+              {isLoading ? (
+                <>
+                  <div className="h-8 bg-dark-border/50 rounded animate-pulse w-32 mb-2"></div>
+                  <div className="h-4 bg-dark-border/50 rounded animate-pulse w-24"></div>
+                </>
+              ) : (
+                <>
+                  <p className="text-2xl font-bold text-gray-100">
+                    ${estimatedEarnings?.toFixed(2) || '0.00'}
+                  </p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    ${work?.hourly_rate}/hour
+                  </p>
+                </>
+              )}
             </div>
           )}
 
@@ -485,7 +515,11 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               <Play className="text-purple-500" size={20} />
               <span className="text-sm text-gray-400">Sessions</span>
             </div>
-            <p className="text-2xl font-bold text-gray-100">{sessions.length}</p>
+            {isLoading ? (
+              <div className="h-8 bg-dark-border/50 rounded animate-pulse w-16"></div>
+            ) : (
+              <p className="text-2xl font-bold text-gray-100">{sessions.length}</p>
+            )}
           </div>
         </div>
 
@@ -493,14 +527,26 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1" style={{ minHeight: '500px' }}>
           {/* Main Timeline */}
           <div className="order-2 lg:order-1 lg:col-span-2 card flex flex-col h-full" style={{ minHeight: '500px' }}>
-            <VisualTimeline
-              entries={timelineEntries}
-              sessions={sessions}
-              runningSession={runningSession || null}
-              scrollToSessionId={scrollToSessionId}
-              onEditEntry={permissions.canEdit ? handleEditEntry : undefined}
-              onDeleteEntry={permissions.canEdit ? handleDeleteEntry : undefined}
-            />
+            {isLoading ? (
+              <div className="space-y-4 p-4">
+                <div className="h-6 bg-dark-border/50 rounded animate-pulse w-48"></div>
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="space-y-2">
+                    <div className="h-4 bg-dark-border/50 rounded animate-pulse w-32"></div>
+                    <div className="h-20 bg-dark-border/30 rounded animate-pulse"></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <VisualTimeline
+                entries={timelineEntries}
+                sessions={sessions}
+                runningSession={runningSession || null}
+                scrollToSessionId={scrollToSessionId}
+                onEditEntry={permissions.canEdit ? handleEditEntry : undefined}
+                onDeleteEntry={permissions.canEdit ? handleDeleteEntry : undefined}
+              />
+            )}
           </div>
 
           {/* Sidebar */}
@@ -536,7 +582,21 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
             <div className="card flex-1 flex flex-col">
               <h3 className="text-lg font-bold text-gray-100 mb-3">Sessions History</h3>
               <div className="space-y-2 overflow-y-auto max-h-96">
-                {sessions.map((session: TimeSession) => (
+                {isLoading ? (
+                  <>
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="bg-dark-bg border border-dark-border rounded p-2">
+                        <div className="h-4 bg-dark-border/50 rounded animate-pulse w-24 mb-2"></div>
+                        <div className="h-4 bg-dark-border/50 rounded animate-pulse w-32"></div>
+                      </div>
+                    ))}
+                  </>
+                ) : sessions.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4 text-sm">
+                    No sessions yet. Start a timer to begin tracking!
+                  </p>
+                ) : (
+                  sessions.map((session: TimeSession) => (
                   <div
                     key={session.id}
                     className="w-full bg-dark-bg border border-dark-border hover:border-gray-600 rounded p-2 text-xs transition-colors group relative"
@@ -572,9 +632,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                       </button>
                     )}
                   </div>
-                ))}
-                {sessions.length === 0 && (
-                  <p className="text-gray-500 text-center py-4">No sessions yet. Start a timer to begin!</p>
+                ))
                 )}
               </div>
             </div>

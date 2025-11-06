@@ -10,6 +10,7 @@ import { TimeSessionModel } from '../models/TimeSession.js';
 import { WorkAccessService } from '../services/workAccessService.js';
 import { imageProcessor } from '../services/imageProcessor.js';
 import { minioService } from '../services/minioService.js';
+import { sseService } from '../services/sseService.js';
 import '../types/index.js';
 
 const router = Router();
@@ -107,6 +108,9 @@ router.post('/', async (req, res, next) => {
       activityType: data.activityType,
     });
 
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(data.workId, 'timeline:create', entry);
+
     res.status(201).json(entry);
   } catch (error) {
     next(error);
@@ -143,6 +147,9 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Timeline entry not found' });
     }
 
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(existingEntry.work_id, 'timeline:update', entry);
+
     res.json(entry);
   } catch (error) {
     next(error);
@@ -178,6 +185,9 @@ router.delete('/:id', async (req, res, next) => {
     if (!deleted) {
       return res.status(404).json({ error: 'Timeline entry not found' });
     }
+
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(entry.work_id, 'timeline:delete', { id });
 
     res.status(204).send();
   } catch (error) {
@@ -249,6 +259,9 @@ router.post('/:id/images', checkAttachmentUploadPermission, uploadImages, async 
       image_urls: updatedImageUrls,
     });
 
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(entry.work_id, 'timeline:update', updatedEntry);
+
     res.json(updatedEntry);
   } catch (error) {
     next(error);
@@ -289,6 +302,9 @@ router.delete('/:id/images/:imageKey(*)', async (req, res, next) => {
     const updatedEntry = await TimelineEntryModel.update(id, userId, {
       image_urls: updatedImageUrls.length > 0 ? updatedImageUrls : null,
     });
+
+    // Emit SSE event for real-time updates
+    await sseService.emitWorkUpdate(entry.work_id, 'timeline:update', updatedEntry);
 
     res.json(updatedEntry);
   } catch (error) {
