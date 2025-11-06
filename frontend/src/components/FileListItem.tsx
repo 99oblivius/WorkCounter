@@ -82,20 +82,24 @@ export default function FileListItem({
               {/* Action Buttons (only show on completed or failed) */}
               {isCompleted && (
                 <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={handleDownload}
-                    className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-blue-400"
-                    title="Download"
-                  >
-                    <Download size={14} />
-                  </button>
-                  <button
-                    onClick={handleDelete}
-                    className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400"
-                    title="Delete"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  {onDownload && (
+                    <button
+                      onClick={handleDownload}
+                      className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-blue-400"
+                      title="Download"
+                    >
+                      <Download size={14} />
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={handleDelete}
+                      className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               )}
 

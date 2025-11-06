@@ -260,7 +260,7 @@ export default function FileStorageSection({ workId, userId, canEdit = true }: F
             key={file.id}
             file={file}
             onDownload={handleDownload}
-            onDelete={canUpload ? deleteMutation.mutate : undefined}
+            onDelete={canEdit ? deleteMutation.mutate : undefined}
           />
         ))}
       </div>

@@ -150,16 +150,18 @@ router.get('/:fileId/download', fileDownloadLimiter, async (req, res, next) => {
     const userId = req.session.user!.userId;
     const fileId = parseInt(req.params.fileId, 10);
 
-    const file = await FileStorageModel.findById(fileId, userId);
+    // Get file without user filtering to support shared works
+    const file = await FileStorageModel.findByIdWithoutUserFilter(fileId);
     if (!file || file.upload_status !== 'completed') {
       return res.status(404).json({ error: 'File not found or not ready' });
     }
 
-    // User isolation check (validate storage key starts with userId)
-    const parts = file.storage_key.split('/');
-    const fileUserId = parseInt(parts[0], 10);
-    if (fileUserId !== userId) {
-      return res.status(403).json({ error: 'Access denied' });
+    // SECURITY: Check if user has view access to the work
+    const workAccess = await WorkAccessService.checkAccess(userId, file.work_id);
+    if (!workAccess.canView) {
+      return res.status(403).json({
+        error: 'Cannot download this file. View permission required on the work.'
+      });
     }
 
     console.log(`[Download] User ${userId} downloading file ${fileId}: ${file.display_name}`);
