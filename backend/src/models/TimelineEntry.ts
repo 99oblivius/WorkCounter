@@ -10,6 +10,15 @@ export class TimelineEntryModel {
     return result.rows[0] || null;
   }
 
+  static async findByIdWithAccess(id: number): Promise<TimelineEntry | null> {
+    // Used when authorization is already checked by middleware
+    const result = await query<TimelineEntry>(
+      'SELECT * FROM timeline_entries WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
   static async findBySessionId(sessionId: number, userId: number): Promise<TimelineEntry[]> {
     const result = await query<TimelineEntry>(
       `SELECT * FROM timeline_entries

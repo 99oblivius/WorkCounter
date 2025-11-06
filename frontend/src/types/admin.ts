@@ -56,7 +56,8 @@ export interface WorkShare {
   username: string;
   email: string;
   sharedAt: string;
-  canEdit: boolean;
+  permissionLevel: 'viewer' | 'editor' | 'manager';
+  canEdit?: boolean; // Legacy
 }
 
 export interface SharedWork {

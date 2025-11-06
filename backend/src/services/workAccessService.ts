@@ -1,36 +1,45 @@
 import { query } from '../config/database.js';
-import { WorkAccessCache } from './cache/workAccessCache.js';
+
+export type WorkPermissionLevel = 'viewer' | 'editor' | 'manager';
 
 interface WorkAccessInfo {
-  canView: boolean;
-  canEdit: boolean;
-  canDelete: boolean;
+  permissionLevel: WorkPermissionLevel;
   isOwner: boolean;
   isShared: boolean;
+  // Derived permissions (computed from level)
+  canView: boolean;
+  canCreate: boolean;
+  canEditOthers: boolean;
+  canDeleteOthers: boolean;
+  // Legacy compatibility
+  canEdit: boolean; // = canEditOthers
+  canDelete: boolean; // = isOwner || canDeleteOthers
 }
 
 export class WorkAccessService {
   /**
-   * Check work access with caching
+   * Check work access permissions
+   * Real-time updates handled by SSE + React Query cache on frontend
    */
   static async checkAccess(userId: number, workId: number): Promise<WorkAccessInfo> {
-    // Check cache
-    const cached = WorkAccessCache.get(userId, workId);
-    if (cached) {
-      return {
-        ...cached,
-        isShared: !cached.isOwner
-      };
-    }
-
     // Query database
     const result = await query<{
+      permission_level: WorkPermissionLevel;
       is_owner: boolean;
+      can_view: boolean;
+      can_create: boolean;
+      can_edit_others: boolean;
+      can_delete_others: boolean;
       can_edit: boolean;
       can_delete: boolean;
     }>(
       `SELECT
+        permission_level,
         is_owner,
+        can_view,
+        can_create,
+        can_edit_others,
+        can_delete_others,
         can_edit,
         can_delete
        FROM work_access
@@ -40,26 +49,31 @@ export class WorkAccessService {
 
     if (result.rows.length === 0) {
       const access = {
+        permissionLevel: 'viewer' as WorkPermissionLevel,
         canView: false,
-        canEdit: false,
-        canDelete: false,
+        canCreate: false,
+        canEditOthers: false,
+        canDeleteOthers: false,
         isOwner: false,
-        isShared: false
+        isShared: false,
+        canEdit: false,
+        canDelete: false
       };
       return access;
     }
 
     const row = result.rows[0];
     const access = {
-      canView: true,
-      canEdit: row.can_edit,
-      canDelete: row.can_delete,
+      permissionLevel: row.permission_level,
+      canView: row.can_view,
+      canCreate: row.can_create,
+      canEditOthers: row.can_edit_others,
+      canDeleteOthers: row.can_delete_others,
       isOwner: row.is_owner,
-      isShared: !row.is_owner
+      isShared: !row.is_owner,
+      canEdit: row.can_edit,
+      canDelete: row.can_delete
     };
-
-    // Cache it
-    WorkAccessCache.set(userId, workId, access);
 
     return access;
   }
@@ -81,7 +95,25 @@ export class WorkAccessService {
   }
 
   /**
-   * Share work with user
+   * Check if user can modify a resource (edit or delete)
+   * Respects ownership (user always can modify their own) and work permissions
+   */
+  static async canModifyResource(
+    userId: number,
+    workId: number,
+    resourceUserId: number,
+    action: 'edit' | 'delete'
+  ): Promise<boolean> {
+    const result = await query<{ can_modify: boolean }>(
+      'SELECT user_can_modify_resource($1, $2, $3, $4) as can_modify',
+      [userId, workId, resourceUserId, action]
+    );
+
+    return result.rows[0]?.can_modify || false;
+  }
+
+  /**
+   * Share work with user at specified permission level
    * ENHANCEMENT: Accept username or email
    */
   static async shareWork(
@@ -89,7 +121,7 @@ export class WorkAccessService {
     ownerUserId: number,
     sharedWithIdentifier: string, // username or email
     sharedByUserId: number,
-    canEdit: boolean = false
+    permissionLevel: WorkPermissionLevel = 'viewer'
   ): Promise<void> {
     // Get user ID from username OR email
     const userResult = await query<{ id: number; username: string }>(
@@ -118,17 +150,20 @@ export class WorkAccessService {
       throw new Error('Not authorized to share this work');
     }
 
-    // Share the work
+    // Share the work with specified permission level
+    // The trigger will automatically set the boolean columns for backwards compatibility
     await query(
-      `INSERT INTO work_shares (work_id, owner_id, shared_with_user_id, shared_by, can_edit)
+      `INSERT INTO work_shares (
+        work_id, owner_id, shared_with_user_id, shared_by, permission_level
+      )
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (work_id, shared_with_user_id)
-       DO UPDATE SET can_edit = EXCLUDED.can_edit, shared_by = EXCLUDED.shared_by, shared_at = CURRENT_TIMESTAMP`,
-      [workId, ownerUserId, sharedWithUserId, sharedByUserId, canEdit]
+       DO UPDATE SET
+         permission_level = EXCLUDED.permission_level,
+         shared_by = EXCLUDED.shared_by,
+         shared_at = CURRENT_TIMESTAMP`,
+      [workId, ownerUserId, sharedWithUserId, sharedByUserId, permissionLevel]
     );
-
-    // Invalidate cache
-    WorkAccessCache.invalidateWork(workId);
   }
 
   /**
@@ -161,9 +196,6 @@ export class WorkAccessService {
     if (result.rows.length === 0) {
       throw new Error('Share not found or not authorized');
     }
-
-    // Invalidate cache
-    WorkAccessCache.invalidateWork(workId);
   }
 
   /**
@@ -178,9 +210,6 @@ export class WorkAccessService {
     if (result.rows.length === 0) {
       throw new Error('Share not found');
     }
-
-    // Invalidate cache
-    WorkAccessCache.invalidateUser(userId);
   }
 
   /**
@@ -190,15 +219,21 @@ export class WorkAccessService {
     username: string;
     email: string;
     sharedAt: Date;
+    permissionLevel: WorkPermissionLevel;
+    // Legacy (for backwards compatibility during transition)
     canEdit: boolean;
   }>> {
     const result = await query<{
       username: string;
       email: string;
       shared_at: Date;
+      permission_level: WorkPermissionLevel;
       can_edit: boolean;
     }>(
-      `SELECT u.username, u.email, ws.shared_at, ws.can_edit
+      `SELECT u.username, u.email, ws.shared_at,
+              ws.permission_level,
+              -- Compute legacy canEdit field from permission_level for backwards compatibility
+              (ws.permission_level = 'manager') as can_edit
        FROM work_shares ws
        JOIN users u ON ws.shared_with_user_id = u.id
        WHERE ws.work_id = $1 AND ws.owner_id = $2
@@ -210,6 +245,7 @@ export class WorkAccessService {
       username: row.username,
       email: row.email,
       sharedAt: row.shared_at,
+      permissionLevel: row.permission_level,
       canEdit: row.can_edit
     }));
   }
@@ -227,7 +263,8 @@ export class WorkAccessService {
     tags: string[] | null;
     ownerUsername: string;
     sharedAt: Date;
-    canEdit: boolean;
+    permissionLevel: WorkPermissionLevel;
+    canEdit: boolean; // Legacy
     created_at: Date;
     updated_at: Date;
   }>> {
@@ -241,13 +278,17 @@ export class WorkAccessService {
       tags: string[] | null;
       username: string;
       shared_at: Date;
+      permission_level: WorkPermissionLevel;
       can_edit: boolean;
       created_at: Date;
       updated_at: Date;
     }>(
       `SELECT ws.work_id, w.title, w.description, w.client_name, w.hourly_rate,
               w.status, w.tags, w.created_at, w.updated_at,
-              u.username, ws.shared_at, ws.can_edit
+              u.username, ws.shared_at,
+              ws.permission_level,
+              -- Compute legacy canEdit field from permission_level for backwards compatibility
+              (ws.permission_level = 'manager') as can_edit
        FROM work_shares ws
        JOIN works w ON ws.work_id = w.id
        JOIN users u ON ws.owner_id = u.id
@@ -266,6 +307,7 @@ export class WorkAccessService {
       tags: row.tags,
       ownerUsername: row.username,
       sharedAt: row.shared_at,
+      permissionLevel: row.permission_level,
       canEdit: row.can_edit,
       created_at: row.created_at,
       updated_at: row.updated_at

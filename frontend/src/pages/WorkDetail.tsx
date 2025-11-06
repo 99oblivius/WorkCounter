@@ -446,7 +446,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 <p className="text-2xl font-mono font-bold text-gray-100">
                   {formatDuration(elapsed)}
                 </p>
-                {permissions.canEdit && (
+                {permissions.canCreate && (
                   <button
                     onClick={handleStopTimer}
                     className="btn btn-danger btn-sm flex items-center space-x-2 w-full justify-center"
@@ -458,7 +458,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               </div>
             ) : (
               <>
-                {permissions.canEdit ? (
+                {permissions.canCreate ? (
                   <button
                     onClick={handleStartTimer}
                     disabled={startMutation.isPending}
@@ -553,16 +553,18 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 sessions={sessions}
                 runningSession={runningSession || null}
                 scrollToSessionId={scrollToSessionId}
-                onEditEntry={permissions.canEdit ? handleEditEntry : undefined}
-                onDeleteEntry={permissions.canEdit ? handleDeleteEntry : undefined}
+                onEditEntry={handleEditEntry}
+                onDeleteEntry={handleDeleteEntry}
+                canEditEntry={(entry) => permissions.canEditResource(entry.user_id)}
+                canDeleteEntry={(entry) => permissions.canDeleteResource(entry.user_id)}
               />
             )}
           </div>
 
           {/* Sidebar */}
           <div className="order-1 lg:order-2 space-y-6 h-full overflow-y-auto" style={{ minHeight: '500px' }}>
-            {/* Quick Note Input - Only for running sessions and users with edit access */}
-            {runningSession && permissions.canEdit && (
+            {/* Quick Note Input - Only for running sessions and users with create access */}
+            {runningSession && permissions.canCreate && (
               <QuickNoteInput
                 workId={workId}
                 sessionId={runningSession.id}
@@ -572,8 +574,8 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               />
             )}
 
-            {/* Alternative: Modal Form Button - Only for users with edit access */}
-            {runningSession && permissions.canEdit && (
+            {/* Alternative: Modal Form Button - Only for users with create access */}
+            {runningSession && permissions.canCreate && (
               <button
                 onClick={() => setShowTimelineForm(true)}
                 className="btn btn-secondary w-full flex items-center justify-center space-x-2"
@@ -585,7 +587,12 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
 
             {/* File Storage Section */}
             {user && (
-              <FileStorageSection workId={workId} userId={user.userId} canEdit={permissions.canEdit} />
+              <FileStorageSection
+                workId={workId}
+                userId={user.userId}
+                canCreate={permissions.canCreate}
+                canDeleteResource={permissions.canDeleteResource}
+              />
             )}
 
             {/* Session History */}
@@ -629,7 +636,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                         </span>
                       </div>
                     </div>
-                    {!session.is_running && permissions.canEdit && (
+                    {!session.is_running && user && permissions.canDeleteResource(session.user_id) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

@@ -41,10 +41,17 @@ router.post(
   async (req: AuthenticatedRequest, res) => {
     try {
       const workId = parseInt(req.params.workId);
-      const { usernameOrEmail, canEdit } = req.body;
+      const { usernameOrEmail, permissionLevel } = req.body;
 
       if (!usernameOrEmail) {
         return res.status(400).json({ error: 'Username or email required' });
+      }
+
+      // Validate permission level
+      const validLevels = ['viewer', 'editor', 'manager'];
+      const level = permissionLevel || 'viewer';
+      if (!validLevels.includes(level)) {
+        return res.status(400).json({ error: 'Invalid permission level. Must be: viewer, editor, or manager' });
       }
 
       // DEFENSE-IN-DEPTH: Double-check ownership even though middleware verified it
@@ -69,7 +76,7 @@ router.post(
         req.user!.userId,
         usernameOrEmail,
         req.user!.userId,
-        canEdit || false
+        level
       );
 
       await AuditService.log({
@@ -78,7 +85,7 @@ router.post(
         action: 'work.shared',
         resourceType: 'work',
         resourceId: workId,
-        details: { sharedWith: usernameOrEmail, canEdit },
+        details: { sharedWith: usernameOrEmail, permissionLevel: level },
         status: 'success',
         ipAddress: req.ip,
         userAgent: req.get('user-agent')

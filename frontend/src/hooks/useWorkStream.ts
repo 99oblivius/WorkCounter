@@ -210,8 +210,9 @@ export function useWorkStream(workId: number, enabled: boolean = true) {
       // Update shares cache
       queryClient.setQueryData(['work-shares', workId], { shares });
 
-      // Invalidate permissions cache (user's permissions may have changed)
+      // Force refetch permissions (permission levels may have changed)
       queryClient.invalidateQueries({ queryKey: ['work-permissions', workId] });
+      queryClient.refetchQueries({ queryKey: ['work-permissions', workId] });
     });
 
     eventSource.addEventListener('share:remove', (event) => {
@@ -221,8 +222,9 @@ export function useWorkStream(workId: number, enabled: boolean = true) {
       // Update shares cache
       queryClient.setQueryData(['work-shares', workId], { shares });
 
-      // Invalidate permissions cache (user's permissions may have changed)
+      // Force refetch permissions (permission levels may have changed)
       queryClient.invalidateQueries({ queryKey: ['work-permissions', workId] });
+      queryClient.refetchQueries({ queryKey: ['work-permissions', workId] });
     });
 
     // Handle errors

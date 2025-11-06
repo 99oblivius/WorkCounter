@@ -200,11 +200,17 @@ router.delete('/:fileId', fileDeleteLimiter, async (req, res, next) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, file.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can delete this file (ownership-aware)
+    const canDelete = await WorkAccessService.canModifyResource(
+      userId,
+      file.work_id,
+      file.user_id,
+      'delete'
+    );
+
+    if (!canDelete) {
       return res.status(403).json({
-        error: 'Cannot delete this file. Edit permission required on the work.'
+        error: 'Cannot delete this file. You can only delete your own files unless you have Manager permission.'
       });
     }
 
@@ -252,11 +258,17 @@ router.post('/:fileId/cancel', fileDeleteLimiter, async (req, res, next) => {
       return res.status(404).json({ error: 'File not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, file.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can delete this file (ownership-aware)
+    const canDelete = await WorkAccessService.canModifyResource(
+      userId,
+      file.work_id,
+      file.user_id,
+      'delete'
+    );
+
+    if (!canDelete) {
       return res.status(403).json({
-        error: 'Cannot cancel this file upload. Edit permission required on the work.'
+        error: 'Cannot cancel this file upload. You can only cancel your own files unless you have Manager permission.'
       });
     }
 

@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { FileStorageModel } from '../models/FileStorage.js';
 import { FILE_SIZE_LIMITS } from '../config/fileConfig.js';
 import { sseService } from './sseService.js';
+import { WorkAccessService } from './workAccessService.js';
 import crypto from 'crypto';
 
 export const tusServer = new Server({
@@ -54,6 +55,14 @@ export const tusServer = new Server({
       const workId = parseInt(metadata.workId as string, 10);
 
       console.log(`[tus] Creating upload: ${metadata.displayName} (${upload.size} bytes)`);
+
+      // SECURITY: Check work-specific create permission (Editor+)
+      const workAccess = await WorkAccessService.checkAccess(userId, workId);
+      console.log(`[tus] Work access for user ${userId} on work ${workId}:`, JSON.stringify(workAccess));
+      if (!workAccess.canCreate) {
+        console.error(`[tus] User ${userId} lacks create permission for work ${workId}`);
+        throw new Error('Editor or Manager permission required to upload files');
+      }
 
       const existingFile = await FileStorageModel.findByTusId(upload.id);
       if (existingFile) {

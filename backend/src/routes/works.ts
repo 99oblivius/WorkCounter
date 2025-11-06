@@ -6,7 +6,6 @@ import { WorkModel } from '../models/Work.js';
 import { TimelineEntryModel } from '../models/TimelineEntry.js';
 import { FileStorageModel } from '../models/FileStorage.js';
 import { minioService } from '../services/minioService.js';
-import { WorkAccessCache } from '../services/cache/workAccessCache.js';
 import { WorkAccessService } from '../services/workAccessService.js';
 import { sseService } from '../services/sseService.js';
 import '../types/index.js';
@@ -77,7 +76,11 @@ router.get('/:id/permissions', requireWorkAccess('view'), async (req, res, next)
     const permissions = await WorkAccessService.checkAccess(userId, workId);
 
     res.json({
+      permissionLevel: permissions.permissionLevel,
       canView: permissions.canView,
+      canCreate: permissions.canCreate,
+      canEditOthers: permissions.canEditOthers,
+      canDeleteOthers: permissions.canDeleteOthers,
       canEdit: permissions.canEdit,
       canDelete: permissions.canDelete,
       isOwner: permissions.isOwner,
@@ -199,9 +202,6 @@ router.delete('/:id', requireWorkAccess('delete'), async (req, res, next) => {
     if (!deleted) {
       return res.status(404).json({ error: 'Work not found' });
     }
-
-    // SECURITY FIX: Invalidate work access cache to prevent stale access checks
-    WorkAccessCache.invalidateWork(id);
 
     console.log(`Work ${id} deleted successfully`);
     res.status(204).send();

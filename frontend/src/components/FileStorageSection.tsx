@@ -19,10 +19,16 @@ import type { FileStorageRecord } from '../types';
 interface FileStorageSectionProps {
   workId: number;
   userId: number;
-  canEdit?: boolean;
+  canCreate?: boolean;
+  canDeleteResource?: (resourceUserId: number) => boolean;
 }
 
-export default function FileStorageSection({ workId, userId, canEdit = true }: FileStorageSectionProps) {
+export default function FileStorageSection({
+  workId,
+  userId,
+  canCreate = false,
+  canDeleteResource
+}: FileStorageSectionProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [isDragging, setIsDragging] = useState(false);
@@ -62,8 +68,8 @@ export default function FileStorageSection({ workId, userId, canEdit = true }: F
 
   // User can upload if they have BOTH:
   // 1. Global files.upload permission (can.uploadFiles)
-  // 2. Edit access to this specific work (canEdit)
-  const canUpload = canEdit && can.uploadFiles;
+  // 2. Create access to this specific work (Editor+)
+  const canUpload = canCreate && can.uploadFiles;
 
   // Show files section for viewing/downloading even without upload permission
   // Upload controls only shown if canUpload is true
@@ -260,7 +266,7 @@ export default function FileStorageSection({ workId, userId, canEdit = true }: F
             key={file.id}
             file={file}
             onDownload={handleDownload}
-            onDelete={canEdit ? deleteMutation.mutate : undefined}
+            onDelete={canDeleteResource && canDeleteResource(file.user_id) ? deleteMutation.mutate : undefined}
           />
         ))}
       </div>

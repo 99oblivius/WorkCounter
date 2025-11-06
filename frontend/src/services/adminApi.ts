@@ -173,10 +173,10 @@ export const workSharingApi = {
     return response.data;
   },
 
-  async shareWork(workId: number, usernameOrEmail: string, canEdit: boolean = false): Promise<void> {
+  async shareWork(workId: number, usernameOrEmail: string, permissionLevel: 'viewer' | 'editor' | 'manager' = 'viewer'): Promise<void> {
     await axios.post(
       `${API_URL}/api/work-sharing/${workId}/share`,
-      { usernameOrEmail, canEdit },
+      { usernameOrEmail, permissionLevel },
       axiosConfig
     );
   },

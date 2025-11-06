@@ -10,6 +10,7 @@ import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useTimer, formatDuration } from '../hooks/useTimer';
 import WorkForm from '../components/WorkForm';
 import type { Work } from '../types';
+import { PERMISSION_LEVELS, type WorkPermissionLevel } from '../types/permissions';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -60,7 +61,8 @@ export default function Dashboard() {
       ...work,
       isOwned: false,
       isShared: true,
-      // The shared work response includes access level info
+      // The shared work response includes permission level
+      permissionLevel: work.permissionLevel || 'viewer',
       canEdit: work.canEdit || false
     }))
   ].filter((work) => {
@@ -279,7 +281,7 @@ export default function Dashboard() {
                 {work.isShared && (
                   <div className="flex items-center space-x-1 text-xs text-blue-400 bg-blue-500 bg-opacity-10 px-2 py-1 rounded ml-2 shrink-0">
                     <Users size={12} />
-                    <span>{work.canEdit ? 'Shared (Edit)' : 'Shared (View)'}</span>
+                    <span>Shared ({work.permissionLevel ? PERMISSION_LEVELS[work.permissionLevel as WorkPermissionLevel].name : 'Viewer'})</span>
                   </div>
                 )}
               </div>
@@ -303,17 +305,20 @@ export default function Dashboard() {
               )}
               <div className="flex justify-between items-center mt-4 pt-4 border-t border-dark-border">
                 <span className="text-xs text-gray-500 capitalize">{work.status}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleStartTimer(work.id);
-                  }}
-                  disabled={!!runningSession || startMutation.isPending}
-                  className="btn btn-primary btn-sm flex items-center space-x-1 disabled:opacity-50"
-                >
-                  <Play size={14} />
-                  <span>Start</span>
-                </button>
+                {/* Only show Start button if owned OR shared with editor/manager permission */}
+                {(work.isOwned || (work.isShared && work.permissionLevel !== 'viewer')) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleStartTimer(work.id);
+                    }}
+                    disabled={!!runningSession || startMutation.isPending}
+                    className="btn btn-primary btn-sm flex items-center space-x-1 disabled:opacity-50"
+                  >
+                    <Play size={14} />
+                    <span>Start</span>
+                  </button>
+                )}
               </div>
             </div>
           ))}

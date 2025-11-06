@@ -86,11 +86,11 @@ router.post('/', async (req, res, next) => {
     const userId = req.session.user!.userId;
     const data = createEntrySchema.parse(req.body);
 
-    // SECURITY: Check if user has edit access to the work
+    // SECURITY: Check if user has create access to the work (Editor+)
     const workAccess = await WorkAccessService.checkAccess(userId, data.workId);
-    if (!workAccess.canEdit) {
+    if (!workAccess.canCreate) {
       return res.status(403).json({
-        error: 'Cannot create timeline entry. Edit permission required on the work.'
+        error: 'Cannot create timeline entry. Editor or Manager permission required.'
       });
     }
 
@@ -123,17 +123,23 @@ router.patch('/:id', async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
     const data = updateEntrySchema.parse(req.body);
 
-    // SECURITY: First get the entry to check work access
-    const existingEntry = await TimelineEntryModel.findById(id, userId);
+    // SECURITY: First get the entry to check work access (no user filter - we check permissions below)
+    const existingEntry = await TimelineEntryModel.findByIdWithAccess(id);
     if (!existingEntry) {
       return res.status(404).json({ error: 'Timeline entry not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, existingEntry.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can modify this timeline entry (ownership-aware)
+    const canModify = await WorkAccessService.canModifyResource(
+      userId,
+      existingEntry.work_id,
+      existingEntry.user_id,
+      'edit'
+    );
+
+    if (!canModify) {
       return res.status(403).json({
-        error: 'Cannot edit this timeline entry. Edit permission required on the work.'
+        error: 'Cannot edit this timeline entry. You can only edit your own entries unless you have Manager permission.'
       });
     }
 
@@ -162,17 +168,23 @@ router.delete('/:id', async (req, res, next) => {
     const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
 
-    // Get entry to delete associated images and check work access
-    const entry = await TimelineEntryModel.findById(id, userId);
+    // Get entry to delete associated images and check work access (no user filter - we check permissions below)
+    const entry = await TimelineEntryModel.findByIdWithAccess(id);
     if (!entry) {
       return res.status(404).json({ error: 'Timeline entry not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, entry.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can delete this timeline entry (ownership-aware)
+    const canDelete = await WorkAccessService.canModifyResource(
+      userId,
+      entry.work_id,
+      entry.user_id,
+      'delete'
+    );
+
+    if (!canDelete) {
       return res.status(403).json({
-        error: 'Cannot delete this timeline entry. Edit permission required on the work.'
+        error: 'Cannot delete this timeline entry. You can only delete your own entries unless you have Manager permission.'
       });
     }
 
@@ -204,17 +216,23 @@ router.post('/:id/images', checkAttachmentUploadPermission, uploadImages, async 
     const userId = req.session.user!.userId;
     const id = parseInt(req.params.id, 10);
 
-    // Check if entry exists and belongs to user
-    const entry = await TimelineEntryModel.findById(id, userId);
+    // Check if entry exists (no user filter - we check permissions below)
+    const entry = await TimelineEntryModel.findByIdWithAccess(id);
     if (!entry) {
       return res.status(404).json({ error: 'Timeline entry not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, entry.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can modify this timeline entry (ownership-aware)
+    const canModify = await WorkAccessService.canModifyResource(
+      userId,
+      entry.work_id,
+      entry.user_id,
+      'edit'
+    );
+
+    if (!canModify) {
       return res.status(403).json({
-        error: 'Cannot upload images to this timeline entry. Edit permission required on the work.'
+        error: 'Cannot upload images to this timeline entry. You can only modify your own entries unless you have Manager permission.'
       });
     }
 
@@ -278,17 +296,23 @@ router.delete('/:id/images/:imageKey(*)', async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
     const imageKey = req.params.imageKey;
 
-    // Check if entry exists and belongs to user
-    const entry = await TimelineEntryModel.findById(id, userId);
+    // Check if entry exists (no user filter - we check permissions below)
+    const entry = await TimelineEntryModel.findByIdWithAccess(id);
     if (!entry) {
       return res.status(404).json({ error: 'Timeline entry not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, entry.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can modify this timeline entry (ownership-aware)
+    const canModify = await WorkAccessService.canModifyResource(
+      userId,
+      entry.work_id,
+      entry.user_id,
+      'edit'
+    );
+
+    if (!canModify) {
       return res.status(403).json({
-        error: 'Cannot delete images from this timeline entry. Edit permission required on the work.'
+        error: 'Cannot delete images from this timeline entry. You can only modify your own entries unless you have Manager permission.'
       });
     }
 

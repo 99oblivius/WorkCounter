@@ -50,12 +50,20 @@ export const authApi = {
     }),
 };
 
+export type WorkPermissionLevel = 'viewer' | 'editor' | 'manager';
+
 export interface WorkPermissions {
-  canView: boolean;
-  canEdit: boolean;
-  canDelete: boolean;
+  permissionLevel: WorkPermissionLevel;
   isOwner: boolean;
   isShared: boolean;
+  // Derived permissions
+  canView: boolean;
+  canCreate: boolean;
+  canEditOthers: boolean;
+  canDeleteOthers: boolean;
+  // Legacy
+  canEdit: boolean;
+  canDelete: boolean;
 }
 
 export const worksApi = {

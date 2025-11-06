@@ -1,3 +1,4 @@
+// User role-based permissions (global)
 export interface UserPermissions {
   permissions: {
     admin: {
@@ -47,3 +48,44 @@ export interface UserPermissions {
     maxImageSizeFormatted: string;
   };
 }
+
+// Work-specific permission levels
+export type WorkPermissionLevel = 'viewer' | 'editor' | 'manager';
+
+export interface WorkShare {
+  username: string;
+  email: string;
+  sharedAt: Date | string;
+  permissionLevel: WorkPermissionLevel;
+  canEdit?: boolean; // Legacy
+}
+
+export const PERMISSION_LEVELS: Record<WorkPermissionLevel, {
+  name: string;
+  description: string[];
+}> = {
+  viewer: {
+    name: 'Viewer',
+    description: [
+      '✓ View work and all content',
+      '• Cannot create or modify'
+    ]
+  },
+  editor: {
+    name: 'Editor',
+    description: [
+      '✓ All viewer permissions',
+      '✓ Create sessions & notes',
+      '✓ Edit/delete own content',
+      '• Cannot modify others\' work'
+    ]
+  },
+  manager: {
+    name: 'Manager',
+    description: [
+      '✓ All editor permissions',
+      '✓ Edit/delete any content',
+      '✓ Full collaboration access'
+    ]
+  }
+};

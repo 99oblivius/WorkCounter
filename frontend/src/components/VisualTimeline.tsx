@@ -11,6 +11,8 @@ interface VisualTimelineProps {
   scrollToSessionId: number | null;
   onEditEntry?: (entry: TimelineEntry) => void;
   onDeleteEntry?: (entryId: number) => void;
+  canEditEntry?: (entry: TimelineEntry) => boolean;
+  canDeleteEntry?: (entry: TimelineEntry) => boolean;
 }
 
 type TimelineItem =
@@ -32,7 +34,7 @@ const ACTIVITY_COLORS: Record<string, string> = {
   'Other': 'bg-gray-500',
 };
 
-export default function VisualTimeline({ entries, sessions, runningSession, scrollToSessionId, onEditEntry, onDeleteEntry }: VisualTimelineProps) {
+export default function VisualTimeline({ entries, sessions, runningSession, scrollToSessionId, onEditEntry, onDeleteEntry, canEditEntry, canDeleteEntry }: VisualTimelineProps) {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
   const sessionRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -201,7 +203,7 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                     <div className="bg-dark-surface border border-dark-border rounded-lg p-3 hover:border-gray-600 transition-colors relative">
                       {/* Edit/Delete buttons - absolutely positioned */}
                       <div className="absolute bottom-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                        {onEditEntry && (
+                        {onEditEntry && canEditEntry && canEditEntry(item.entry) && (
                           <button
                             onClick={() => onEditEntry(item.entry)}
                             className="p-1 bg-dark-surface hover:bg-dark-hover rounded text-gray-400 hover:text-blue-400 border border-dark-border"
@@ -210,7 +212,7 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                             <Edit2 size={14} />
                           </button>
                         )}
-                        {onDeleteEntry && (
+                        {onDeleteEntry && canDeleteEntry && canDeleteEntry(item.entry) && (
                           <button
                             onClick={() => {
                               if (window.confirm('Delete this note?')) {

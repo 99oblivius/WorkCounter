@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X, UserPlus, Trash2, Users } from 'lucide-react';
+import { useMutation } from '@tanstack/react-query';
+import { X, UserPlus, Trash2, Users, Shield } from 'lucide-react';
 import { workSharingApi } from '../services/adminApi';
 import type { WorkShare } from '../types/admin';
+import type { WorkPermissionLevel } from '../types/permissions';
+import { PERMISSION_LEVELS } from '../types/permissions';
+import WorkPermissionModal from './WorkPermissionModal';
 
 interface WorkSharingModalProps {
   workId: number;
@@ -12,9 +15,10 @@ interface WorkSharingModalProps {
 
 export default function WorkSharingModal({ workId, shares, onClose }: WorkSharingModalProps) {
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
-  const [canEdit, setCanEdit] = useState(false);
+  const [permissionLevel, setPermissionLevel] = useState<WorkPermissionLevel>('viewer');
   const [currentShares, setCurrentShares] = useState<WorkShare[]>(shares);
-  const queryClient = useQueryClient();
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<string | null>(null);
 
   // Sync local state when shares prop changes
   useEffect(() => {
@@ -22,11 +26,14 @@ export default function WorkSharingModal({ workId, shares, onClose }: WorkSharin
   }, [shares]);
 
   const shareMutation = useMutation({
-    mutationFn: () => workSharingApi.shareWork(workId, usernameOrEmail, canEdit),
+    mutationFn: (level?: WorkPermissionLevel) =>
+      workSharingApi.shareWork(workId, editingUser || usernameOrEmail, level || permissionLevel),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['work-shares', workId] });
+      // SSE already updates cache via share:add event in useWorkStream
       setUsernameOrEmail('');
-      setCanEdit(false);
+      setPermissionLevel('viewer');
+      setEditingUser(null);
+      setShowPermissionModal(false);
     },
   });
 
@@ -34,7 +41,7 @@ export default function WorkSharingModal({ workId, shares, onClose }: WorkSharin
     mutationFn: (identifier: string) =>
       workSharingApi.unshareWork(workId, identifier),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['work-shares', workId] });
+      // SSE already updates cache via share:remove event in useWorkStream
     },
   });
 
@@ -70,27 +77,18 @@ export default function WorkSharingModal({ workId, shares, onClose }: WorkSharin
                 className="input w-full"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && usernameOrEmail) {
-                    shareMutation.mutate();
+                    shareMutation.mutate(undefined);
                   }
                 }}
               />
             </div>
-            <label className="flex items-center space-x-2 text-sm text-gray-300 pb-2">
-              <input
-                type="checkbox"
-                checked={canEdit}
-                onChange={(e) => setCanEdit(e.target.checked)}
-                className="rounded"
-              />
-              <span>Can edit</span>
-            </label>
             <button
-              onClick={() => shareMutation.mutate()}
+              onClick={() => shareMutation.mutate(undefined)}
               disabled={!usernameOrEmail || shareMutation.isPending}
-              className="btn btn-primary"
+              className="btn btn-primary inline-flex items-center gap-1"
             >
-              <UserPlus size={16} className="mr-1" />
-              Share
+              <UserPlus size={16} />
+              <span>Share</span>
             </button>
           </div>
           {shareMutation.isError && (
@@ -129,15 +127,18 @@ export default function WorkSharingModal({ workId, shares, onClose }: WorkSharin
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <span
-                      className={`text-xs px-2 py-1 rounded ${
-                        share.canEdit
-                          ? 'bg-blue-500 bg-opacity-20 text-blue-400'
-                          : 'bg-gray-700 text-gray-400'
-                      }`}
+                    <button
+                      onClick={() => {
+                        setEditingUser(share.username);
+                        setPermissionLevel(share.permissionLevel);
+                        setShowPermissionModal(true);
+                      }}
+                      className="text-xs px-3 py-1.5 rounded bg-blue-500 bg-opacity-20 text-blue-400 hover:bg-opacity-30 flex items-center space-x-1"
+                      title="Change permissions"
                     >
-                      {share.canEdit ? 'Can edit' : 'View only'}
-                    </span>
+                      <Shield size={14} />
+                      <span>{PERMISSION_LEVELS[share.permissionLevel].name}</span>
+                    </button>
                     <button
                       onClick={() => unshareMutation.mutate(share.username)}
                       disabled={unshareMutation.isPending}
@@ -159,6 +160,23 @@ export default function WorkSharingModal({ workId, shares, onClose }: WorkSharin
           </button>
         </div>
       </div>
+
+      {/* Permission Modal (stacked on top) */}
+      {showPermissionModal && editingUser && (
+        <WorkPermissionModal
+          username={editingUser}
+          currentLevel={permissionLevel}
+          onSelect={(level) => {
+            setPermissionLevel(level);
+            shareMutation.mutate(level);
+          }}
+          onClose={() => {
+            setShowPermissionModal(false);
+            setEditingUser(null);
+          }}
+          isLoading={shareMutation.isPending}
+        />
+      )}
     </div>
   );
 }

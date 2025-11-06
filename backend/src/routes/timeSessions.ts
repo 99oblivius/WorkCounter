@@ -76,10 +76,10 @@ router.post('/start', async (req, res, next) => {
     const userId = req.session.user!.userId;
     const { workId } = startSessionSchema.parse(req.body);
 
-    // Check work access - need edit permission to start timer
+    // Check work access - need create permission to start timer (Editor+)
     const access = await WorkAccessService.checkAccess(userId, workId);
-    if (!access.canEdit) {
-      return res.status(403).json({ error: 'Cannot start timer for this work. Edit permission required.' });
+    if (!access.canCreate) {
+      return res.status(403).json({ error: 'Cannot start timer for this work. Editor or Manager permission required.' });
     }
 
     const work = await WorkModel.findByIdWithAccess(workId);
@@ -122,12 +122,20 @@ router.post('/:id/stop', async (req, res, next) => {
       return res.status(400).json({ error: 'Session is not running' });
     }
 
-    // Check if user owns session OR has edit access to the work
+    // Check if user owns session OR is manager
     const ownsSession = session.user_id === userId;
     const workAccess = await WorkAccessService.checkAccess(userId, session.work_id);
 
-    if (!ownsSession && !workAccess.canEdit) {
-      return res.status(403).json({ error: 'Cannot stop this session' });
+    // Must have at least Editor permission (canCreate) if stopping own session
+    // Or Manager permission (canEditOthers) if stopping someone else's session
+    if (ownsSession) {
+      if (!workAccess.canCreate) {
+        return res.status(403).json({ error: 'Editor or Manager permission required to stop sessions' });
+      }
+    } else {
+      if (!workAccess.canEditOthers) {
+        return res.status(403).json({ error: 'Only Manager permission can stop others\' sessions' });
+      }
     }
 
     const stoppedSession = await TimeSessionModel.stopWithAccess(id, new Date());
@@ -153,11 +161,17 @@ router.patch('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, existingSession.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can modify this session (ownership-aware)
+    const canModify = await WorkAccessService.canModifyResource(
+      userId,
+      existingSession.work_id,
+      existingSession.user_id,
+      'edit'
+    );
+
+    if (!canModify) {
       return res.status(403).json({
-        error: 'Cannot edit this session. Edit permission required on the work.'
+        error: 'Cannot edit this session. You can only edit your own sessions unless you have Manager permission.'
       });
     }
 
@@ -195,11 +209,17 @@ router.delete('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    // SECURITY: Check if user has edit access to the work
-    const workAccess = await WorkAccessService.checkAccess(userId, sessionToDelete.work_id);
-    if (!workAccess.canEdit) {
+    // SECURITY: Check if user can delete this session (ownership-aware)
+    const canDelete = await WorkAccessService.canModifyResource(
+      userId,
+      sessionToDelete.work_id,
+      sessionToDelete.user_id,
+      'delete'
+    );
+
+    if (!canDelete) {
       return res.status(403).json({
-        error: 'Cannot delete this session. Edit permission required on the work.'
+        error: 'Cannot delete this session. You can only delete your own sessions unless you have Manager permission.'
       });
     }
 
