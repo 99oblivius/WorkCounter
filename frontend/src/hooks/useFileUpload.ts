@@ -4,6 +4,7 @@ import { useUploadQueue } from '../stores/uploadQueueStore';
 import { useQueryClient } from '@tanstack/react-query';
 import { filesApi } from '../services/api';
 import { sanitizeFilename, getFileExtension } from '../utils/format';
+import { FILE_SIZE_LIMITS, FILE_MESSAGES } from '../config/fileConfig';
 
 const API_URL = import.meta.env.VITE_API_URL || window.location.origin;
 
@@ -140,6 +141,10 @@ export function useFileUpload(workId: number, userId: number) {
           workId: workId.toString(),
           userId: userId.toString(),
         },
+        // SECURITY: Add CSRF protection header required by backend
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+        },
         // @ts-ignore - withCredentials exists but may not be in type definitions
         withCredentials: true,
 
@@ -151,19 +156,12 @@ export function useFileUpload(workId: number, userId: number) {
           queryClient.invalidateQueries({ queryKey: ['files', 'work', workId] });
         },
 
-        onProgress: (bytesUploaded, bytesTotal) => {
+        onProgress: (bytesUploaded) => {
           const speed = calculateSpeed(uploadId, bytesUploaded);
           updateProgress(uploadId, bytesUploaded, speed);
-
-          // Log at 25% increments only
-          const progress = Math.round((bytesUploaded / bytesTotal) * 100);
-          if (progress % 25 === 0) {
-            console.log(`[Upload] Progress for ${uploadId}: ${progress}% (${bytesUploaded}/${bytesTotal})`);
-          }
         },
 
         onSuccess: () => {
-          console.log(`[Upload] Completed: ${file.name}`);
           setCompleted(uploadId);
           speedTrackerRef.current.delete(uploadId);
           processQueue();
@@ -173,22 +171,18 @@ export function useFileUpload(workId: number, userId: number) {
         onAfterResponse: (_req, res) => {
           // Extract fileId IMMEDIATELY to prevent race conditions during cancellation
           const uploadMetadata = res.getHeader('Upload-Metadata');
-          console.log(`[Upload] onAfterResponse - Upload-Metadata header:`, uploadMetadata);
 
           if (uploadMetadata) {
             try {
               // Format: "key1 value1,key2 value2"
               const pairs = uploadMetadata.split(',');
-              console.log(`[Upload] Parsed ${pairs.length} metadata pairs:`, pairs);
 
               for (const pair of pairs) {
                 const [key, value] = pair.trim().split(' ');
-                console.log(`[Upload] Metadata pair - key: "${key}", value: "${value}"`);
 
                 if (key === 'fileId' && value) {
                   const fileId = parseInt(atob(value), 10);
                   setFileId(uploadId, fileId);
-                  console.log(`[Upload] ✓ Set fileId ${fileId} for upload ${uploadId}`);
                   break;
                 }
               }
@@ -196,8 +190,6 @@ export function useFileUpload(workId: number, userId: number) {
               console.error('[Upload] Failed to parse fileId from metadata:', e);
               console.error('[Upload] Raw metadata was:', uploadMetadata);
             }
-          } else {
-            console.log(`[Upload] No Upload-Metadata header in response`);
           }
         },
       });
@@ -206,10 +198,6 @@ export function useFileUpload(workId: number, userId: number) {
       setTusUpload(uploadId, upload, upload.url || undefined);
 
       startUpload(uploadId);
-
-      console.log(`[Upload] Starting upload for: ${file.name}`);
-      console.log(`[Upload] - uploadId: ${uploadId}`);
-      console.log(`[Upload] - file size: ${file.size} bytes`);
 
       upload.start();
     },
@@ -233,13 +221,12 @@ export function useFileUpload(workId: number, userId: number) {
 
       for (const file of files) {
         if (file.size === 0) {
-          console.warn(`[Upload] Skipping 0-byte file: ${file.name}`);
-          alert(`File "${file.name}" is empty (0 bytes). Folders cannot be uploaded directly - please use a zip file.`);
+          alert(FILE_MESSAGES.FILE_EMPTY(file.name));
           continue;
         }
 
-        if (file.size > 5 * 1024 * 1024 * 1024) {
-          alert(`File "${file.name}" exceeds 5GB limit`);
+        if (file.size > FILE_SIZE_LIMITS.MAX_FILE_SIZE) {
+          alert(FILE_MESSAGES.FILE_EXCEEDS_LIMIT(file.name));
           continue;
         }
 
@@ -261,7 +248,6 @@ export function useFileUpload(workId: number, userId: number) {
       if (fileId) {
         try {
           await filesApi.cancel(fileId);
-          console.log(`[Upload] Cancelled on backend: ${fileId}`);
         } catch (error) {
           console.error('[Upload] Failed to cancel on backend:', error);
         }

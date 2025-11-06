@@ -7,18 +7,62 @@ export { API_URL };
 const api = axios.create({
   baseURL: `${API_URL}/api`,
   withCredentials: true,
+  // SECURITY: Add CSRF protection header required by backend
+  headers: {
+    'X-Requested-With': 'XMLHttpRequest'
+  }
 });
 
+// Global response interceptor for handling authentication errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    // Handle 401 Unauthorized - user session expired or account deactivated
+    if (error.response?.status === 401) {
+      // Check if we're not already on the login page to avoid redirect loop
+      if (!window.location.pathname.includes('/login')) {
+        // Show error message if account was deactivated
+        if (error.response?.data?.error === 'Account deactivated') {
+          alert(error.response.data.message || 'Your account has been deactivated. Please contact an administrator.');
+        }
+
+        // Redirect to login
+        window.location.href = '/login';
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
 export const authApi = {
-  getLoginUrl: () => api.get<{ authUrl: string }>('/auth/login'),
-  logout: () => api.post('/auth/logout'),
+  login: (username: string, password: string) =>
+    api.post<{ success: boolean; user: User; forcePasswordReset: boolean }>('/auth/login', {
+      username,
+      password,
+    }),
+  logout: () => api.post<{ success: boolean }>('/auth/logout'),
   getMe: () => api.get<User>('/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.post<{ success: boolean }>('/auth/change-password', {
+      currentPassword,
+      newPassword,
+    }),
 };
+
+export interface WorkPermissions {
+  canView: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  isOwner: boolean;
+  isShared: boolean;
+}
 
 export const worksApi = {
   getAll: (params?: { status?: string; search?: string }) =>
     api.get<Work[]>('/works', { params }),
   getById: (id: number) => api.get<Work>(`/works/${id}`),
+  getPermissions: (id: number) => api.get<WorkPermissions>(`/works/${id}/permissions`),
   create: (data: Partial<Work>) => api.post<Work>('/works', data),
   update: (id: number, data: Partial<Work>) => api.patch<Work>(`/works/${id}`, data),
   delete: (id: number) => api.delete(`/works/${id}`),
