@@ -1,42 +1,149 @@
 import { Router } from 'express';
-import { getOIDCClient, handleAuthCallback } from '../middleware/auth.js';
-import { env } from '../config/env.js';
+import rateLimit from 'express-rate-limit';
+import { UserModel } from '../models/User.js';
+import { PasswordService } from '../services/passwordService.js';
+import { AuditService } from '../services/auditService.js';
+import { requireAuth } from '../middleware/auth.js';
 import '../types/index.js';
 
 const router = Router();
 
-router.get('/login', (req, res) => {
-  try {
-    const client = getOIDCClient();
-    let authUrl = client.authorizationUrl({
-      scope: 'openid email profile',
-      state: 'random_state_string',
-    });
-
-    // Rewrite internal Docker URLs to public domain
-    authUrl = authUrl.replace('http://authentik-server:9000', env.FRONTEND_URL);
-    authUrl = authUrl.replace('http://localhost:9902', env.FRONTEND_URL);
-
-    res.json({ authUrl });
-  } catch (error) {
-    res.status(503).json({
-      error: 'Authentication service not configured',
-      message: 'Please configure Authentik OIDC application'
-    });
-  }
+// Rate limiting for login attempts - only count failed attempts
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // 10 failed attempts per IP per 15 minutes
+  message: { error: 'Too many failed login attempts, please try again after 15 minutes' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Don't count successful logins
 });
 
-router.get('/callback', async (req, res) => {
-  try {
-    const { code } = req.query;
+/**
+ * POST /api/auth/login
+ * Native authentication - username/email + password
+ * SECURITY: Constant-time response to prevent username enumeration
+ */
+router.post('/login', loginLimiter, async (req, res) => {
+  const startTime = Date.now();
+  const MIN_RESPONSE_TIME = 300; // Minimum 300ms to match bcrypt timing
 
-    if (!code || typeof code !== 'string') {
-      return res.status(400).json({ error: 'Missing authorization code' });
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
     }
 
-    const userData = await handleAuthCallback(code, `${env.BACKEND_URL}/api/auth/callback`);
+    // Find user by username or email
+    const user = await UserModel.findByUsernameOrEmail(username);
 
-    // Regenerate session ID for security and to ensure it's properly set
+    if (!user) {
+      // SECURITY: Add artificial delay to match bcrypt timing (prevent username enumeration)
+      const elapsed = Date.now() - startTime;
+      if (elapsed < MIN_RESPONSE_TIME) {
+        await new Promise(resolve => setTimeout(resolve, MIN_RESPONSE_TIME - elapsed));
+      }
+
+      // Don't reveal whether user exists - generic error message
+      await AuditService.log({
+        userId: undefined,
+        username: username,
+        action: 'auth.login_failed',
+        resourceType: 'user',
+        details: { reason: 'user_not_found', username },
+        status: 'failure',
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent')
+      });
+
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    // Check if user is active
+    if (!user.is_active) {
+      await AuditService.log({
+        userId: user.id,
+        username: user.username,
+        action: 'auth.login_failed',
+        resourceType: 'user',
+        resourceId: user.id,
+        details: { reason: 'account_inactive' },
+        status: 'failure',
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent')
+      });
+
+      return res.status(403).json({ error: 'Account is inactive. Please contact an administrator.' });
+    }
+
+    // Check if account is locked
+    const isLocked = await UserModel.isAccountLocked(user.id);
+    if (isLocked) {
+      await AuditService.log({
+        userId: user.id,
+        username: user.username,
+        action: 'auth.login_failed',
+        resourceType: 'user',
+        resourceId: user.id,
+        details: { reason: 'account_locked' },
+        status: 'failure',
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent')
+      });
+
+      return res.status(423).json({
+        error: 'Account is temporarily locked due to multiple failed login attempts. Please try again in 30 minutes.'
+      });
+    }
+
+    // Check if user has a password set
+    if (!user.password_hash) {
+      await AuditService.log({
+        userId: user.id,
+        username: user.username,
+        action: 'auth.login_failed',
+        resourceType: 'user',
+        resourceId: user.id,
+        details: { reason: 'no_password_set' },
+        status: 'failure',
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent')
+      });
+
+      return res.status(403).json({
+        error: 'No password set for this account. Please contact an administrator to set up your password.'
+      });
+    }
+
+    // Verify password
+    const isValidPassword = await UserModel.verifyPassword(user.id, password);
+
+    if (!isValidPassword) {
+      // Record failed login attempt
+      await UserModel.recordFailedLogin(user.id);
+
+      await AuditService.log({
+        userId: user.id,
+        username: user.username,
+        action: 'auth.login_failed',
+        resourceType: 'user',
+        resourceId: user.id,
+        details: { reason: 'invalid_password' },
+        status: 'failure',
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent')
+      });
+
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    // Reset failed login attempts on successful login
+    await UserModel.resetFailedLogins(user.id);
+
+    // Update last login timestamp
+    await UserModel.updateLastLogin(user.id);
+
+    // Regenerate session ID for security
     await new Promise<void>((resolve, reject) => {
       req.session.regenerate((err) => {
         if (err) reject(err);
@@ -44,85 +151,169 @@ router.get('/callback', async (req, res) => {
       });
     });
 
+    // Set session data
     req.session.user = {
-      userId: userData.userId,
-      authentikId: userData.authentikId,
-      email: userData.email,
-      username: userData.username,
+      userId: user.id,
+      authentikId: user.authentik_id, // Keep for backward compatibility
+      email: user.email,
+      username: user.username,
     };
 
-    // CRITICAL: Save session before redirecting to ensure session is persisted
+    // Save session
     await new Promise<void>((resolve, reject) => {
       req.session.save((err) => {
         if (err) {
           console.error('Session save error:', err);
           reject(err);
         } else {
-          console.log('Session saved successfully for user:', userData.userId);
           resolve();
         }
       });
     });
 
-    res.redirect(`${env.FRONTEND_URL}/dashboard`);
+    // Log successful login
+    await AuditService.log({
+      userId: user.id,
+      username: user.username,
+      action: 'auth.login',
+      resourceType: 'user',
+      resourceId: user.id,
+      details: { method: 'native' },
+      status: 'success',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent')
+    });
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+      },
+      forcePasswordReset: user.force_password_reset || false,
+    });
   } catch (error) {
-    console.error('Auth callback error:', error);
-    res.redirect(`${env.FRONTEND_URL}?error=auth_failed`);
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed. Please try again.' });
   }
 });
 
-router.post('/logout', (req, res) => {
+/**
+ * POST /api/auth/logout
+ * Destroy session
+ */
+router.post('/logout', requireAuth, async (req, res) => {
   try {
-    const client = getOIDCClient();
+    const user = req.session.user;
 
-    // Get Authentik's end session endpoint
-    const endSessionEndpoint = client.issuer.metadata.end_session_endpoint;
-
-    // Destroy backend session
     req.session.destroy((err) => {
       if (err) {
         console.error('Session destroy error:', err);
         return res.status(500).json({ error: 'Logout failed' });
       }
 
-      // Return Authentik logout URL for frontend to redirect to
-      if (endSessionEndpoint) {
-        const logoutUrl = `${endSessionEndpoint}?post_logout_redirect_uri=${encodeURIComponent(env.FRONTEND_URL)}`;
-
-        // Rewrite internal Docker URLs to public domain
-        const publicLogoutUrl = logoutUrl.replace('http://authentik-server:9000', env.FRONTEND_URL);
-
-        res.json({
-          success: true,
-          logoutUrl: publicLogoutUrl
-        });
-      } else {
-        // Fallback if no end_session_endpoint
-        res.json({
-          success: true,
-          logoutUrl: `${env.FRONTEND_URL}/login`
-        });
+      // Log logout
+      if (user) {
+        AuditService.log({
+          userId: user.userId,
+          username: user.username,
+          action: 'auth.logout',
+          resourceType: 'user',
+          resourceId: user.userId,
+          status: 'success',
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent')
+        }).catch(err => console.error('Audit log error:', err));
       }
+
+      res.json({ success: true });
     });
   } catch (error) {
-    // If OIDC client not available, just destroy session
-    req.session.destroy((err) => {
-      if (err) {
-        return res.status(500).json({ error: 'Logout failed' });
-      }
-      res.json({
-        success: true,
-        logoutUrl: `${env.FRONTEND_URL}/login`
-      });
-    });
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
   }
 });
 
+/**
+ * GET /api/auth/me
+ * Get current user info
+ */
 router.get('/me', (req, res) => {
   if (!req.session.user) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
   res.json(req.session.user);
+});
+
+/**
+ * POST /api/auth/change-password
+ * Change user password
+ */
+router.post('/change-password', requireAuth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    const userId = req.session.user!.userId;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    // Validate new password
+    const validation = PasswordService.validatePassword(newPassword);
+    if (!validation.valid) {
+      return res.status(400).json({
+        error: 'Password does not meet requirements',
+        details: validation.errors
+      });
+    }
+
+    // Get user
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // If user has a current password, verify it
+    if (user.password_hash) {
+      const isValid = await UserModel.verifyPassword(userId, currentPassword);
+      if (!isValid) {
+        await AuditService.log({
+          userId,
+          username: user.username,
+          action: 'auth.password_change_failed',
+          resourceType: 'user',
+          resourceId: userId,
+          details: { reason: 'invalid_current_password' },
+          status: 'failure',
+          ipAddress: req.ip,
+          userAgent: req.get('user-agent')
+        });
+
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
+    }
+
+    // Set new password
+    await UserModel.setPassword(userId, newPassword);
+
+    // Log password change
+    await AuditService.log({
+      userId,
+      username: user.username,
+      action: 'auth.password_changed',
+      resourceType: 'user',
+      resourceId: userId,
+      status: 'success',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent')
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Password change error:', error);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
 });
 
 export default router;
