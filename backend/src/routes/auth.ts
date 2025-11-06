@@ -154,7 +154,6 @@ router.post('/login', loginLimiter, async (req, res) => {
     // Set session data
     req.session.user = {
       userId: user.id,
-      authentikId: user.authentik_id, // Keep for backward compatibility
       email: user.email,
       username: user.username,
     };

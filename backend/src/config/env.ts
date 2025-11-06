@@ -14,10 +14,6 @@ const envSchema = z.object({
   REDIS_HOST: z.string().default('redis'),
   REDIS_PORT: z.string().transform(Number).default('6379'),
   SESSION_SECRET: z.string().min(32),
-  // Authentik variables are now optional (for backward compatibility)
-  AUTHENTIK_URL: z.string().url().optional(),
-  AUTHENTIK_CLIENT_ID: z.string().optional(),
-  AUTHENTIK_CLIENT_SECRET: z.string().optional(),
   FRONTEND_URL: z.string().url(),
   BACKEND_URL: z.string().url(),
   MINIO_ENDPOINT: z.string().default('minio'),

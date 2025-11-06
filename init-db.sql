@@ -1,4 +1,5 @@
-CREATE DATABASE authentik;
+-- NOTE: This file is outdated. The actual schema is defined by migrations.
+-- The authentik_id column below is now NULLABLE (not NOT NULL) per migration 009.
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (

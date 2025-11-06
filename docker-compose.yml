@@ -54,63 +54,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  authentik-server:
-    image: ghcr.io/goauthentik/server:2024.8.3
-    container_name: workcounter-authentik-server
-    command: server
-    user: "1000:1000"
-    environment:
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
-      AUTHENTIK_REDIS__HOST: redis
-      AUTHENTIK_POSTGRESQL__HOST: postgres
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__USER: ${DB_USER}
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${DB_PASSWORD}
-      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
-      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
-      AUTHENTIK_AVATARS: initials
-      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-admin}
-      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-admin@localhost}
-      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN}
-    ports:
-      - "${AUTHENTIK_PORT}:9000"
-    volumes:
-      - ./data/authentik/media:/media
-      - ./data/authentik/templates:/templates
-    networks:
-      - workcounter-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  authentik-worker:
-    image: ghcr.io/goauthentik/server:2024.8.3
-    container_name: workcounter-authentik-worker
-    command: worker
-    user: "1000:1000"
-    environment:
-      AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY}
-      AUTHENTIK_REDIS__HOST: redis
-      AUTHENTIK_POSTGRESQL__HOST: postgres
-      AUTHENTIK_POSTGRESQL__NAME: authentik
-      AUTHENTIK_POSTGRESQL__USER: ${DB_USER}
-      AUTHENTIK_POSTGRESQL__PASSWORD: ${DB_PASSWORD}
-      AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
-      AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
-    volumes:
-      - ./data/authentik/media:/media
-      - ./data/authentik/templates:/templates
-      - ./data/authentik/certs:/certs
-    networks:
-      - workcounter-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   backend:
     build:
       context: ./backend
@@ -125,9 +68,6 @@ services:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
       SESSION_SECRET: ${SESSION_SECRET}
-      AUTHENTIK_URL: http://authentik-server:9000
-      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID}
-      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
       BACKEND_URL: ${BACKEND_URL}
       MINIO_ENDPOINT: minio
@@ -145,8 +85,6 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-      authentik-server:
-        condition: service_started
     restart: unless-stopped
 
   frontend:
@@ -155,7 +93,6 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${BACKEND_API_URL}
-        VITE_AUTHENTIK_URL: ${AUTHENTIK_PUBLIC_URL}
     container_name: workcounter-frontend
     ports:
       - "${FRONTEND_PORT}:3000"
