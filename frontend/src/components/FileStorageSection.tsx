@@ -6,6 +6,7 @@ import InlineUploadProgress from './InlineUploadProgress';
 import ZippingNotification from './ZippingNotification';
 import { filesApi } from '../services/api';
 import { useFileUpload } from '../hooks/useFileUpload';
+import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useZippingQueue } from '../stores/zippingQueueStore';
 import {
   isFolderSupported,
@@ -18,17 +19,22 @@ import type { FileStorageRecord } from '../types';
 interface FileStorageSectionProps {
   workId: number;
   userId: number;
+  canEdit?: boolean;
 }
 
-export default function FileStorageSection({ workId, userId }: FileStorageSectionProps) {
+export default function FileStorageSection({ workId, userId, canEdit = true }: FileStorageSectionProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
+  // Check user permissions for file uploads
+  const { can, limits, isLoading: permissionsLoading } = useUserPermissions();
+
   const { queueFiles } = useFileUpload(workId, userId);
   const { addZipping, updateProgress, setCompleted, setFailed } = useZippingQueue();
 
+  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   // No polling - uploads update via queue invalidation
   const { data: files = [] } = useQuery({
     queryKey: ['files', 'work', workId],
@@ -45,6 +51,22 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
       queryClient.invalidateQueries({ queryKey: ['files', 'work', workId] });
     },
   });
+
+  // Drag counter prevents flickering when dragging over child elements
+  const dragCounterRef = useRef(0);
+
+  // NOW safe to do conditional returns - all hooks have been called
+  if (permissionsLoading) {
+    return <div className="text-gray-500 text-sm">Loading...</div>;
+  }
+
+  // User can upload if they have BOTH:
+  // 1. Global files.upload permission (can.uploadFiles)
+  // 2. Edit access to this specific work (canEdit)
+  const canUpload = canEdit && can.uploadFiles;
+
+  // Show files section for viewing/downloading even without upload permission
+  // Upload controls only shown if canUpload is true
 
   const handleDownload = async (fileId: number) => {
     try {
@@ -76,9 +98,6 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
       fileInputRef.current.value = '';
     }
   };
-
-  // Drag counter prevents flickering when dragging over child elements
-  const dragCounterRef = useRef(0);
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -116,29 +135,21 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
 
     const { items, files: legacyFiles } = e.dataTransfer;
 
-    console.log('[Drop] DataTransfer items:', items?.length || 0);
-    console.log('[Drop] DataTransfer files:', legacyFiles?.length || 0);
-    console.log('[Drop] Folder support:', isFolderSupported());
-
     if (!items || items.length === 0) {
-      console.log('[Drop] No items, falling back to legacy files API');
       const droppedFiles = Array.from(legacyFiles || []).filter(f => f.size > 0);
       if (droppedFiles.length > 0) {
         queueFiles(droppedFiles);
       } else {
-        console.warn('[Drop] All files have 0 bytes - might be folders');
         alert('Folder upload not supported in this browser. Please zip the folder manually or use a modern browser.');
       }
       return;
     }
 
     if (!isFolderSupported()) {
-      console.log('[Drop] Folder API not supported, falling back to legacy files');
       const droppedFiles = Array.from(legacyFiles || []).filter(f => f.size > 0);
       if (droppedFiles.length > 0) {
         queueFiles(droppedFiles);
       } else {
-        console.warn('[Drop] All files have 0 bytes - might be folders');
         alert('Folder upload not supported in this browser. Please zip the folder manually or use a modern browser.');
       }
       return;
@@ -147,19 +158,13 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
     setIsProcessing(true);
 
     try {
-      console.log('[Drop] Processing items with folder support...');
       const { files, folders } = await processDataTransferItems(items);
 
-      console.log('[Drop] Detected files:', files.length);
-      console.log('[Drop] Detected folders:', folders.length);
-
       if (files.length > 0) {
-        console.log('[Drop] Queueing', files.length, 'files for upload');
         queueFiles(files);
       }
 
       if (folders.length === 0 && files.length === 0) {
-        console.warn('[Drop] No valid files or folders detected');
         alert('No valid files found to upload.');
         setIsProcessing(false);
         return;
@@ -167,11 +172,9 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
 
       for (const folder of folders) {
         if (folder.items.length === 0) {
-          console.warn(`[Drop] Skipping empty folder: ${folder.name}`);
           continue;
         }
 
-        console.log(`[Drop] Zipping folder "${folder.name}" with ${folder.items.length} files`);
         const zippingId = addZipping(folder.name, folder.items.length);
 
         try {
@@ -179,7 +182,6 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
             updateProgress(zippingId, progress.filesProcessed, progress.currentFile);
           });
 
-          console.log(`[Drop] Zip complete: ${zipFile.name} (${zipFile.size} bytes)`);
           setCompleted(zippingId);
 
           queueFiles([zipFile]);
@@ -203,12 +205,12 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
   return (
     <div
       className="card flex-1 flex flex-col relative"
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onDragEnter={canUpload ? handleDragEnter : undefined}
+      onDragOver={canUpload ? handleDragOver : undefined}
+      onDragLeave={canUpload ? handleDragLeave : undefined}
+      onDrop={canUpload ? handleDrop : undefined}
     >
-      {isDragging && (
+      {isDragging && canUpload && (
         <div className="absolute inset-0 z-10 bg-blue-500 bg-opacity-10 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center pointer-events-none">
           <div className="text-center">
             <Paperclip size={48} className="mx-auto mb-2 text-blue-400" />
@@ -219,22 +221,26 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-lg font-bold text-gray-100">Attached Files</h3>
 
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="btn btn-primary btn-sm flex items-center space-x-2"
-          title="Upload files"
-        >
-          <Paperclip size={14} />
-          <span>Add Files</span>
-        </button>
+        {canUpload && (
+          <>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="btn btn-primary btn-sm flex items-center space-x-2"
+              title={`Upload files (max ${limits.maxFileSizeFormatted} per file)`}
+            >
+              <Paperclip size={14} />
+              <span>Add Files</span>
+            </button>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={handleFileSelect}
-        />
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+          </>
+        )}
       </div>
 
       <div className="space-y-2 flex-1 overflow-y-auto">
@@ -243,7 +249,9 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
 
         {files.length === 0 && (
           <p className="text-gray-500 text-center py-4 text-sm">
-            No files yet. Click "Add Files" or drag & drop to upload.
+            {canUpload
+              ? "No files yet. Click \"Add Files\" or drag & drop to upload."
+              : "No files attached to this work."}
           </p>
         )}
 
@@ -252,7 +260,7 @@ export default function FileStorageSection({ workId, userId }: FileStorageSectio
             key={file.id}
             file={file}
             onDownload={handleDownload}
-            onDelete={deleteMutation.mutate}
+            onDelete={canUpload ? deleteMutation.mutate : undefined}
           />
         ))}
       </div>

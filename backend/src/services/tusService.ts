@@ -4,6 +4,7 @@ import type { Upload } from '@tus/utils';
 import type { ServerRequest } from 'srvx';
 import { env } from '../config/env.js';
 import { FileStorageModel } from '../models/FileStorage.js';
+import { FILE_SIZE_LIMITS } from '../config/fileConfig.js';
 import crypto from 'crypto';
 
 export const tusServer = new Server({
@@ -110,7 +111,7 @@ export const tusServer = new Server({
     }
   },
 
-  maxSize: 5 * 1024 * 1024 * 1024,
+  maxSize: FILE_SIZE_LIMITS.MAX_FILE_SIZE,
 
   respectForwardedHeaders: true,
 

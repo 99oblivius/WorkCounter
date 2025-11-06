@@ -21,7 +21,7 @@ export const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB max per file
+    fileSize: 50 * 1024 * 1024, // 50MB max per file
     files: 9, // Max 9 files for 3x3 grid
   },
 });

@@ -20,12 +20,35 @@ export class TimelineEntryModel {
     return result.rows;
   }
 
+  static async findBySessionIdWithAccess(sessionId: number): Promise<TimelineEntry[]> {
+    // Used when authorization is already checked by middleware
+    const result = await query<TimelineEntry>(
+      `SELECT * FROM timeline_entries
+       WHERE time_session_id = $1
+       ORDER BY timestamp ASC`,
+      [sessionId]
+    );
+    return result.rows;
+  }
+
   static async findByWorkId(workId: number, userId: number): Promise<TimelineEntry[]> {
     const result = await query<TimelineEntry>(
       `SELECT * FROM timeline_entries
        WHERE work_id = $1 AND user_id = $2
        ORDER BY timestamp DESC`,
       [workId, userId]
+    );
+    return result.rows;
+  }
+
+  static async findByWorkIdWithAccess(workId: number): Promise<TimelineEntry[]> {
+    // Used when authorization is already checked by middleware
+    // Returns all timeline entries for the work regardless of user
+    const result = await query<TimelineEntry>(
+      `SELECT * FROM timeline_entries
+       WHERE work_id = $1
+       ORDER BY timestamp DESC`,
+      [workId]
     );
     return result.rows;
   }

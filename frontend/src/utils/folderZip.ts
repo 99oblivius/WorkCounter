@@ -206,61 +206,42 @@ export async function processDataTransferItems(
   const files: File[] = [];
   const folders: Array<{ name: string; items: FolderItem[] }> = [];
 
-  console.log('[Folder Zip] Processing', items.length, 'items');
-
   const processedEntries: FileSystemEntry[] = [];
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
 
-    console.log(`[Folder Zip] Item ${i}: kind=${item.kind}, type=${item.type}`);
-
     if (item.kind !== 'file') {
-      console.log(`[Folder Zip] Skipping non-file item ${i}`);
       continue;
     }
 
     const entry = item.webkitGetAsEntry?.();
     if (!entry) {
-      console.log(`[Folder Zip] No entry for item ${i}, using getAsFile fallback`);
       const file = item.getAsFile();
-      if (file) {
-        console.log(`[Folder Zip] File from getAsFile: ${file.name}, size=${file.size}`);
-        if (file.size > 0) {
-          files.push(file);
-        } else {
-          console.warn(`[Folder Zip] Skipping 0-byte file: ${file.name}`);
-        }
+      if (file && file.size > 0) {
+        files.push(file);
       }
       continue;
     }
 
-    console.log(`[Folder Zip] Entry ${i}: name=${entry.name}, isFile=${entry.isFile}, isDirectory=${entry.isDirectory}`);
     processedEntries.push(entry);
   }
 
   for (const entry of processedEntries) {
     if (entry.isFile) {
-      console.log(`[Folder Zip] Processing file: ${entry.name}`);
       const fileEntry = entry as FileSystemFileEntry;
       const file = await new Promise<File>((resolve, reject) => {
         fileEntry.file(resolve, reject);
       });
 
-      console.log(`[Folder Zip] File details: ${file.name}, size=${file.size}`);
       if (file.size > 0) {
         files.push(file);
-      } else {
-        console.warn(`[Folder Zip] Skipping 0-byte file: ${file.name}`);
       }
     } else if (entry.isDirectory) {
-      console.log(`[Folder Zip] Processing directory: ${entry.name}`);
       try {
         const folderItems = await traverseFileTree(entry);
-        console.log(`[Folder Zip] Folder "${entry.name}" contains ${folderItems.length} items`);
 
         if (folderItems.length === 0) {
-          console.warn(`[Folder Zip] Skipping empty folder: ${entry.name}`);
           continue;
         }
 
@@ -272,12 +253,9 @@ export async function processDataTransferItems(
         console.error(`[Folder Zip] Failed to process folder ${entry.name}:`, error);
         throw new FolderZipError(`Failed to process folder: ${entry.name}`);
       }
-    } else {
-      console.warn(`[Folder Zip] Unknown entry type for: ${entry.name}`);
     }
   }
 
-  console.log(`[Folder Zip] Result: ${files.length} files, ${folders.length} folders`);
   return { files, folders };
 }
 

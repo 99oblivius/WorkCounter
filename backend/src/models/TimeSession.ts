@@ -10,12 +10,33 @@ export class TimeSessionModel {
     return result.rows[0] || null;
   }
 
+  static async findByIdWithAccess(id: number): Promise<TimeSession | null> {
+    // Used when authorization is already checked by middleware
+    const result = await query<TimeSession>(
+      'SELECT * FROM time_sessions WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
+  }
+
   static async findByWorkId(workId: number, userId: number): Promise<TimeSession[]> {
     const result = await query<TimeSession>(
       `SELECT * FROM time_sessions
        WHERE work_id = $1 AND user_id = $2
        ORDER BY start_time DESC`,
       [workId, userId]
+    );
+    return result.rows;
+  }
+
+  static async findByWorkIdWithAccess(workId: number): Promise<TimeSession[]> {
+    // Used when authorization is already checked by middleware
+    // Returns all sessions for the work regardless of user
+    const result = await query<TimeSession>(
+      `SELECT * FROM time_sessions
+       WHERE work_id = $1
+       ORDER BY start_time DESC`,
+      [workId]
     );
     return result.rows;
   }
@@ -59,6 +80,20 @@ export class TimeSessionModel {
        WHERE id = $2 AND user_id = $3
        RETURNING *`,
       [endTime, id, userId]
+    );
+    return result.rows[0];
+  }
+
+  static async stopWithAccess(id: number, endTime: Date): Promise<TimeSession> {
+    // Used when authorization is already checked by middleware
+    const result = await query<TimeSession>(
+      `UPDATE time_sessions
+       SET end_time = $1,
+           duration_ms = EXTRACT(EPOCH FROM ($1 - start_time)) * 1000,
+           is_running = false
+       WHERE id = $2
+       RETURNING *`,
+      [endTime, id]
     );
     return result.rows[0];
   }
@@ -109,6 +144,18 @@ export class TimeSessionModel {
        FROM time_sessions
        WHERE work_id = $1 AND user_id = $2 AND duration_ms IS NOT NULL`,
       [workId, userId]
+    );
+    return parseInt(result.rows[0]?.total || '0', 10);
+  }
+
+  static async getTotalDurationWithAccess(workId: number): Promise<number> {
+    // Used when authorization is already checked by middleware
+    // Returns total for all users' sessions on this work
+    const result = await query<{ total: string }>(
+      `SELECT COALESCE(SUM(duration_ms), 0) as total
+       FROM time_sessions
+       WHERE work_id = $1 AND duration_ms IS NOT NULL`,
+      [workId]
     );
     return parseInt(result.rows[0]?.total || '0', 10);
   }

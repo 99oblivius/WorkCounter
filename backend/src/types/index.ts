@@ -1,8 +1,15 @@
 export interface User {
   id: number;
-  authentik_id: string;
+  authentik_id?: string | null; // Optional for native auth
   email: string;
   username: string;
+  is_active: boolean;
+  last_login_at?: Date;
+  password_hash?: string;
+  password_updated_at?: Date;
+  force_password_reset?: boolean;
+  failed_login_attempts?: number;
+  locked_until?: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -47,7 +54,7 @@ export interface TimelineEntry {
 
 export interface UserSessionData {
   userId: number;
-  authentikId: string;
+  authentikId?: string | null; // Optional for native auth
   email: string;
   username: string;
 }

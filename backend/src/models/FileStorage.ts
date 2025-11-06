@@ -149,6 +149,32 @@ export class FileStorageModel {
   }
 
   /**
+   * Get all completed files for a work (when authorization is already checked)
+   */
+  static async findByWorkIdWithAccess(workId: number): Promise<FileStorageRecord[]> {
+    const result = await query<FileStorageRecord>(
+      `SELECT * FROM file_storage
+       WHERE work_id = $1 AND upload_status = 'completed'
+       ORDER BY uploaded_at DESC`,
+      [workId]
+    );
+    return result.rows;
+  }
+
+  /**
+   * Get all files for a work including in-progress (when authorization is already checked)
+   */
+  static async findAllByWorkIdWithAccess(workId: number): Promise<FileStorageRecord[]> {
+    const result = await query<FileStorageRecord>(
+      `SELECT * FROM file_storage
+       WHERE work_id = $1
+       ORDER BY created_at DESC`,
+      [workId]
+    );
+    return result.rows;
+  }
+
+  /**
    * Get a single file by ID
    */
   static async findById(fileId: number, userId: number): Promise<FileStorageRecord | null> {
