@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Search, Clock, LogOut, Play, Pause } from 'lucide-react';
+import { Plus, Search, Clock, LogOut, Play, Pause, Settings, ChevronDown, User, Key, Users } from 'lucide-react';
 import { worksApi, sessionsApi, authApi } from '../services/api';
+import { workSharingApi } from '../services/adminApi';
 import { useAuth } from '../hooks/useAuth';
+import { usePermissions } from '../hooks/usePermissions';
+import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useTimer, formatDuration } from '../hooks/useTimer';
 import WorkForm from '../components/WorkForm';
 import type { Work } from '../types';
@@ -12,11 +15,26 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { hasPermission } = usePermissions();
+  const { can } = useUserPermissions();
   const [showForm, setShowForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('active');
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
-  const { data: works = [] } = useQuery({
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const { data: ownedWorks = [] } = useQuery({
     queryKey: ['works', statusFilter, searchTerm],
     queryFn: async () => {
       const response = await worksApi.getAll({
@@ -25,6 +43,39 @@ export default function Dashboard() {
       });
       return response.data;
     },
+  });
+
+  const { data: sharedWorks = [] } = useQuery({
+    queryKey: ['shared-works'],
+    queryFn: async () => {
+      const works = await workSharingApi.getSharedWithMe();
+      return works;
+    },
+  });
+
+  // Combine owned and shared works, marking each with ownership info
+  const works = [
+    ...ownedWorks.map((work: Work) => ({ ...work, isOwned: true, isShared: false })),
+    ...sharedWorks.map((work: any) => ({
+      ...work,
+      isOwned: false,
+      isShared: true,
+      // The shared work response includes access level info
+      canEdit: work.canEdit || false
+    }))
+  ].filter((work) => {
+    // Apply status filter to combined works
+    if (statusFilter && work.status !== statusFilter) return false;
+    // Apply search filter to combined works
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      return (
+        work.title?.toLowerCase().includes(term) ||
+        work.description?.toLowerCase().includes(term) ||
+        work.client_name?.toLowerCase().includes(term)
+      );
+    }
+    return true;
   });
 
   const { data: runningSession } = useQuery({
@@ -54,9 +105,9 @@ export default function Dashboard() {
 
   const logoutMutation = useMutation({
     mutationFn: () => authApi.logout(),
-    onSuccess: (response) => {
-      // Redirect to Authentik logout endpoint, which will then redirect back to frontend
-      window.location.href = response.data.logoutUrl || '/login';
+    onSuccess: () => {
+      // Navigate to login page
+      window.location.href = '/login';
     },
   });
 
@@ -86,14 +137,73 @@ export default function Dashboard() {
               <h1 className="text-2xl font-bold text-gray-100">WorkCounter</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-400">{user?.username}</span>
-              <button
-                onClick={() => logoutMutation.mutate()}
-                className="btn btn-secondary flex items-center space-x-2"
-              >
-                <LogOut size={16} />
-                <span>Logout</span>
-              </button>
+              {hasPermission('admin.access') && (
+                <button
+                  onClick={() => navigate('/admin')}
+                  className="btn btn-secondary flex items-center space-x-2"
+                  title="Admin Panel"
+                >
+                  <Settings size={16} />
+                  <span>Admin</span>
+                </button>
+              )}
+
+              {/* User Menu Dropdown */}
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center space-x-2 px-3 py-2 rounded-md text-gray-300 hover:bg-dark-hover transition-colors"
+                >
+                  <User size={18} />
+                  <span className="text-sm">{user?.username}</span>
+                  <ChevronDown size={16} className={`transition-transform ${showUserMenu ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showUserMenu && (
+                  <div className="absolute right-0 mt-2 w-56 bg-dark-surface border border-dark-border rounded-lg shadow-lg py-2 z-50">
+                    <div className="px-4 py-2 border-b border-dark-border">
+                      <p className="text-sm font-medium text-gray-100">{user?.username}</p>
+                      <p className="text-xs text-gray-500">{user?.email}</p>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        // TODO: Navigate to settings/profile page
+                        alert('Profile settings coming soon!');
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-dark-hover flex items-center space-x-3"
+                    >
+                      <User size={16} />
+                      <span>Profile Settings</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        navigate('/change-password');
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-dark-hover flex items-center space-x-3"
+                    >
+                      <Key size={16} />
+                      <span>Change Password</span>
+                    </button>
+
+                    <div className="border-t border-dark-border my-2"></div>
+
+                    <button
+                      onClick={() => {
+                        setShowUserMenu(false);
+                        logoutMutation.mutate();
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-dark-hover flex items-center space-x-3"
+                    >
+                      <LogOut size={16} />
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -146,23 +256,36 @@ export default function Dashboard() {
               <option value="completed">Completed</option>
             </select>
           </div>
-          <button
-            onClick={() => setShowForm(true)}
-            className="btn btn-primary flex items-center space-x-2"
-          >
-            <Plus size={20} />
-            <span>New Work</span>
-          </button>
+          {can.createWorks && (
+            <button
+              onClick={() => setShowForm(true)}
+              className="btn btn-primary flex items-center space-x-2"
+            >
+              <Plus size={20} />
+              <span>New Work</span>
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {works.map((work: Work) => (
+          {works.map((work: any) => (
             <div
               key={work.id}
               className="card hover:bg-dark-hover cursor-pointer transition-colors"
               onClick={() => navigate(`/work/${work.id}`)}
             >
-              <h3 className="text-lg font-semibold text-gray-100 mb-2">{work.title}</h3>
+              <div className="flex items-start justify-between mb-2">
+                <h3 className="text-lg font-semibold text-gray-100 flex-1">{work.title}</h3>
+                {work.isShared && (
+                  <div className="flex items-center space-x-1 text-xs text-blue-400 bg-blue-500 bg-opacity-10 px-2 py-1 rounded ml-2 shrink-0">
+                    <Users size={12} />
+                    <span>{work.canEdit ? 'Shared (Edit)' : 'Shared (View)'}</span>
+                  </div>
+                )}
+              </div>
+              {work.isShared && work.ownerUsername && (
+                <p className="text-xs text-gray-500 mb-2">Owner: {work.ownerUsername}</p>
+              )}
               {work.client_name && (
                 <p className="text-sm text-gray-400 mb-2">Client: {work.client_name}</p>
               )}
@@ -171,7 +294,7 @@ export default function Dashboard() {
               )}
               {work.tags && work.tags.length > 0 && (
                 <div className="flex flex-wrap gap-2 mb-3">
-                  {work.tags.map((tag, i) => (
+                  {work.tags.map((tag: string, i: number) => (
                     <span key={i} className="text-xs bg-dark-border px-2 py-1 rounded text-gray-400">
                       {tag}
                     </span>

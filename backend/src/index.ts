@@ -6,8 +6,8 @@ import helmet from 'helmet';
 import cors from 'cors';
 import { env } from './config/env.js';
 import { pool } from './config/database.js';
-import { initializeOIDC } from './middleware/auth.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { csrfProtection, strictCsrfProtection } from './middleware/csrf.js';
 import './types/index.js';
 
 import authRoutes from './routes/auth.js';
@@ -16,14 +16,36 @@ import timeSessionsRoutes from './routes/timeSessions.js';
 import timelineEntriesRoutes from './routes/timelineEntries.js';
 import statsRoutes from './routes/stats.js';
 import fileStorageRoutes from './routes/fileStorage.js';
+import workSharingRoutes from './routes/workSharing.js';
+import settingsRoutes from './routes/settings.js';
+import userPermissionsRoutes from './routes/userPermissions.js';
+import adminUsersRoutes from './routes/admin/users.js';
+import adminSettingsRoutes from './routes/admin/settings.js';
+import adminAuditRoutes from './routes/admin/audit.js';
+import adminRolesRoutes from './routes/admin/roles.js';
 
 const app = express();
 
 // Trust proxy - required for secure cookies behind reverse proxy
 app.set('trust proxy', 1);
 
+// SECURITY FIX: Enable CSP in production with proper directives
 app.use(helmet({
-  contentSecurityPolicy: env.NODE_ENV === 'production' ? undefined : false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],  // unsafe-inline needed for React dev
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      connectSrc: ["'self'", env.FRONTEND_URL || "'self'"],
+      fontSrc: ["'self'", 'data:'],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+      upgradeInsecureRequests: env.NODE_ENV === 'production' ? [] : null,
+    },
+  },
+  crossOriginEmbedderPolicy: false,  // Allow image loading
 }));
 
 app.use(cors({
@@ -72,11 +94,16 @@ app.use(
       httpOnly: true,
       secure: env.NODE_ENV === 'production',
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      sameSite: 'lax', // 'lax' works better with OAuth redirects
+      // SECURITY FIX: Changed from 'lax' to 'strict' for CSRF protection
+      // Safe to use 'strict' now that we're using native auth (no OAuth redirects)
+      sameSite: 'strict',
       path: '/',
     },
   })
 );
+
+// SECURITY: Global CSRF protection for all state-changing requests
+app.use(csrfProtection);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/works', worksRoutes);
@@ -84,6 +111,15 @@ app.use('/api/sessions', timeSessionsRoutes);
 app.use('/api/timeline', timelineEntriesRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/files', fileStorageRoutes);
+app.use('/api/work-sharing', workSharingRoutes);
+app.use('/api/settings', settingsRoutes);
+app.use('/api/user-permissions', userPermissionsRoutes);
+
+// Admin routes - Strict CSRF protection
+app.use('/api/admin/users', strictCsrfProtection, adminUsersRoutes);
+app.use('/api/admin/settings', strictCsrfProtection, adminSettingsRoutes);
+app.use('/api/admin/audit', adminAuditRoutes);
+app.use('/api/admin/roles', strictCsrfProtection, adminRolesRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -96,14 +132,8 @@ async function startServer() {
     await pool.query('SELECT 1');
     console.log('Database connection established');
 
-    // Try to initialize OIDC, but don't fail if it's not ready yet
-    try {
-      await initializeOIDC();
-    } catch (error) {
-      console.warn('OIDC initialization failed - authentication will not work until Authentik is configured');
-      console.warn('Please configure an OAuth2/OIDC application named "workcounter" in Authentik');
-      console.warn('The server will continue to run, but auth endpoints will not function');
-    }
+    // Native authentication is now enabled - no Authentik required
+    console.log('Native authentication enabled');
 
     // Initialize MinIO
     try {
