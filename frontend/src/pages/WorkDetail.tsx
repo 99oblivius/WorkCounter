@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download, Share2, LogOut } from 'lucide-react';
 import { worksApi, sessionsApi, timelineApi, authApi } from '../services/api';
 import { workSharingApi } from '../services/adminApi';
-import { useTimer, formatDuration } from '../hooks/useTimer';
+import { useTimer, formatDuration, formatDurationShort } from '../hooks/useTimer';
 import { useUploadWarning } from '../hooks/useUploadWarning';
 import { useWorkPermissions } from '../hooks/useWorkPermissions';
 import { useWorkStream } from '../hooks/useWorkStream';
@@ -87,6 +87,29 @@ export default function WorkDetail() {
   const runningSession = sessions.find((s) => s.is_running);
 
   const elapsed = useTimer(runningSession || null);
+
+  // Update browser tab title based on timer status
+  useEffect(() => {
+    if (!runningSession) {
+      // No timer running - restore default title
+      document.title = 'WorkCounter';
+      return;
+    }
+
+    // Timer is running - update every minute
+    const updateTitle = () => {
+      const formattedTime = formatDurationShort(elapsed);
+      document.title = `▶ counting ${formattedTime}`;
+    };
+
+    // Update immediately
+    updateTitle();
+
+    // Update every 60 seconds (1 minute)
+    const interval = setInterval(updateTitle, 60000);
+
+    return () => clearInterval(interval);
+  }, [runningSession, elapsed]);
 
   const startMutation = useMutation({
     mutationFn: () => sessionsApi.start(workId),
