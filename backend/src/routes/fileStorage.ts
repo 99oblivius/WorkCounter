@@ -10,29 +10,51 @@ import { sseService } from '../services/sseService.js';
 
 const router = Router();
 
-// SECURITY: Rate limiting for file operations to prevent abuse
-const fileUploadLimiter = rateLimit({
+// SECURITY: Rate limiting for file upload creation (POST only)
+// Global rate limit - prevents system-wide upload spam
+const globalUploadCreateLimiter = rateLimit({
+  windowMs: 30 * 1000, // 30 seconds
+  max: 30, // 30 upload creations per 30 seconds globally
+  message: { error: 'System is busy, please try again in a moment' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: () => 'global', // Same key for all users
+});
+
+// Per-user rate limit - prevents individual user spam
+const userUploadCreateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50, // 50 uploads per 15 minutes per IP
+  max: 50, // 50 upload creations per 15 minutes per user
   message: { error: 'Too many file uploads, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req: any) => {
+    return req.session?.user?.userId ? `user:${req.session.user.userId}` : 'anonymous';
+  },
 });
 
 const fileDownloadLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 100, // 100 downloads per minute per IP
+  max: 100, // 100 downloads per minute per user
   message: { error: 'Too many download requests, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
+  // Use userId as key instead of IP address
+  keyGenerator: (req: any) => {
+    return req.session?.user?.userId ? `user:${req.session.user.userId}` : 'anonymous';
+  },
 });
 
 const fileDeleteLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 30, // 30 deletions per 5 minutes per IP
+  max: 30, // 30 deletions per 5 minutes per user
   message: { error: 'Too many delete requests, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
+  // Use userId as key instead of IP address
+  keyGenerator: (req: any) => {
+    return req.session?.user?.userId ? `user:${req.session.user.userId}` : 'anonymous';
+  },
 });
 
 // Middleware to check auth and permissions for tus, and restore original res.end (session middleware wraps it)
@@ -70,16 +92,26 @@ const tusAuthCheck = async (req: any, res: any, next: any) => {
 };
 
 // tus upload endpoints - auth checked but session response wrapping removed
-// POST /api/files/upload - Create new upload
-// HEAD /api/files/upload/:id - Check upload status
-// PATCH /api/files/upload/:id - Upload chunk
-// DELETE /api/files/upload/:id - Cancel upload (not exposed to frontend)
-// SECURITY: Apply rate limiting to uploads
-router.all('/upload', fileUploadLimiter, tusAuthCheck, (req, res) => {
+// SECURITY: Rate limit only on POST (upload creation), not PATCH (chunks) or HEAD (status)
+// This prevents large files from hitting rate limits during chunk uploads
+
+// POST /api/files/upload - Create new upload (rate limited)
+router.post('/upload', tusAuthCheck, globalUploadCreateLimiter, userUploadCreateLimiter, (req, res) => {
   return tusServer.handle(req, res);
 });
 
-router.all('/upload/*', fileUploadLimiter, tusAuthCheck, (req, res) => {
+// PATCH /api/files/upload/:id - Upload chunk (no rate limit - TUS protocol protects)
+router.patch('/upload/*', tusAuthCheck, (req, res) => {
+  return tusServer.handle(req, res);
+});
+
+// HEAD /api/files/upload/:id - Check upload status (no rate limit)
+router.head('/upload/*', tusAuthCheck, (req, res) => {
+  return tusServer.handle(req, res);
+});
+
+// DELETE /api/files/upload/:id - Cancel upload (handled by frontend cancel endpoint)
+router.delete('/upload/*', tusAuthCheck, (req, res) => {
   return tusServer.handle(req, res);
 });
 
