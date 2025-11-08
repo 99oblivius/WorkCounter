@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Paperclip, Trash2 } from 'lucide-react';
+import { X, Paperclip, Trash2, Tag } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { timelineApi } from '../services/api';
 import type { TimelineEntry } from '../types';
 import ImageLightbox from './ImageLightbox';
 import { FILE_SIZE_LIMITS, FILE_MESSAGES, validateImageFile } from '../config/fileConfig';
+import { ACTIVITY_TYPES, getActivityTypeColor } from '../constants/activityTypes';
 
 interface EditTimelineModalProps {
   entry: TimelineEntry;
@@ -12,24 +13,12 @@ interface EditTimelineModalProps {
   onSave: (data: { label?: string; activityType?: string | null }) => void;
 }
 
-const ACTIVITY_TYPES = [
-  'Development',
-  'Design',
-  'Meeting',
-  'Research',
-  'Review',
-  'Testing',
-  'Documentation',
-  'Planning',
-  'Bug Fix',
-  'Other',
-];
-
 const MAX_IMAGES = FILE_SIZE_LIMITS.MAX_NOTE_IMAGES;
 
 export default function EditTimelineModal({ entry, onClose, onSave }: EditTimelineModalProps) {
   const [label, setLabel] = useState(entry.label || '');
-  const [activityType, setActivityType] = useState(entry.activity_type || '');
+  const [selectedActivityType, setSelectedActivityType] = useState<string | null>(entry.activity_type || null);
+  const [showActivityPicker, setShowActivityPicker] = useState(false);
   const [imageKeys, setImageKeys] = useState<string[]>(entry.image_urls || []);
   const [imagesToDelete, setImagesToDelete] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -37,7 +26,7 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
 
   useEffect(() => {
     setLabel(entry.label || '');
-    setActivityType(entry.activity_type || '');
+    setSelectedActivityType(entry.activity_type || null);
     setImageKeys(entry.image_urls || []);
     setImagesToDelete([]);
   }, [entry]);
@@ -81,6 +70,15 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
     setImagesToDelete(prev => [...prev, imageKey]);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter (without Shift) to submit
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e as any);
+    }
+    // Shift+Enter will insert newline naturally
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -106,7 +104,7 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
 
     onSave({
       label: label.trim() || undefined,
-      activityType: activityType || null,
+      activityType: selectedActivityType || null,
     });
   };
 
@@ -126,33 +124,92 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
-              Note
+              Note (Shift+Enter for new line)
             </label>
             <textarea
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              className="input"
+              onKeyDown={handleKeyDown}
+              className="input resize-none"
               rows={3}
               autoFocus
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Activity Type
-            </label>
-            <select
-              value={activityType}
-              onChange={(e) => setActivityType(e.target.value)}
-              className="input"
-            >
-              <option value="">None</option>
-              {ACTIVITY_TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-300">
+                Activity Type
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowActivityPicker(!showActivityPicker)}
+                className="activity-picker-button btn-sm"
+              >
+                <Tag size={14} />
+                <span className="text-xs">Set Activity</span>
+              </button>
+            </div>
+
+            {showActivityPicker && (
+              <div className="p-3 bg-dark-bg rounded border border-dark-border mb-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {ACTIVITY_TYPES.map(activity => (
+                    <button
+                      key={activity.name}
+                      type="button"
+                      onClick={() => {
+                        setSelectedActivityType(activity.name);
+                        setShowActivityPicker(false);
+                      }}
+                      className={`px-3 py-1.5 rounded border-2 text-sm transition-all ${
+                        selectedActivityType === activity.name
+                          ? `${activity.borderColor} ${activity.bgColor} bg-opacity-20 text-gray-100`
+                          : `${activity.borderColor} border-opacity-50 text-gray-400 hover:border-opacity-100`
+                      }`}
+                    >
+                      {activity.label}
+                    </button>
+                  ))}
+                  {selectedActivityType && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedActivityType(null);
+                        setShowActivityPicker(false);
+                      }}
+                      className="px-3 py-1.5 rounded border-2 border-gray-500 text-sm text-gray-400 hover:border-opacity-100"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {selectedActivityType && !showActivityPicker && (
+              <div className="flex flex-wrap gap-1">
+                {(() => {
+                  const activity = getActivityTypeColor(selectedActivityType);
+                  if (!activity) return null;
+                  return (
+                    <span
+                      key={selectedActivityType}
+                      className={`px-2 py-0.5 text-xs rounded border ${activity.borderColor} ${activity.bgColor} bg-opacity-20 text-gray-300 flex items-center space-x-1`}
+                    >
+                      <span>{activity.label}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedActivityType(null)}
+                        className="hover:text-white"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* Images section */}

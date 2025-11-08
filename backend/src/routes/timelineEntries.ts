@@ -15,29 +15,32 @@ import '../types/index.js';
 
 const router = Router();
 
+// Valid activity types for timeline entries
+const validActivityTypes = ['meeting', 'coding', 'review', 'testing', 'documentation', 'planning', 'break', 'research'] as const;
+
 // SECURITY: Comprehensive input validation with max lengths
 const createEntrySchema = z.object({
   timeSessionId: z.number().int().positive(),
   workId: z.number().int().positive(),
   timestamp: z.string().datetime(),
   label: z.string().min(1).max(2000).optional(), // SECURITY FIX: Added max length
-  activityType: z.string().max(100).optional(),  // SECURITY FIX: Added max length
+  activityType: z.enum(validActivityTypes).optional(),
 });
 
 const updateEntrySchema = z.object({
   timestamp: z.string().datetime().optional(),
   label: z.string().min(1).max(2000).nullable().optional(),  // SECURITY FIX: Added max length
-  activityType: z.string().max(100).nullable().optional(),  // SECURITY FIX: Added max length
+  activityType: z.enum(validActivityTypes).nullable().optional(),
 });
 
 router.use(requireAuth);
 
 router.get('/session/:sessionId', async (req, res, next) => {
   try {
-    const userId = req.session.user!.userId;
     const sessionId = parseInt(req.params.sessionId, 10);
 
-    const entries = await TimelineEntryModel.findBySessionId(sessionId, userId);
+    // Get all entries for this session (authorization handled at session/work level)
+    const entries = await TimelineEntryModel.findBySessionIdWithAccess(sessionId);
     res.json(entries);
   } catch (error) {
     next(error);
@@ -94,9 +97,16 @@ router.post('/', async (req, res, next) => {
       });
     }
 
-    const session = await TimeSessionModel.findById(data.timeSessionId, userId);
+    // FIX BUG 1: Managers should be able to add notes to any session in the work, not just their own
+    // Use WithAccess method since we already verified work-level create permission
+    const session = await TimeSessionModel.findByIdWithAccess(data.timeSessionId);
     if (!session) {
       return res.status(404).json({ error: 'Time session not found' });
+    }
+
+    // Verify session belongs to the same work
+    if (session.work_id !== data.workId) {
+      return res.status(400).json({ error: 'Session does not belong to this work' });
     }
 
     const entry = await TimelineEntryModel.create({

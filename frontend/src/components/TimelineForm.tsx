@@ -48,6 +48,15 @@ export default function TimelineForm({ workId, sessionId, onClose, onSuccess }: 
     mutation.mutate(formData);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter (without Shift) to submit
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e as any);
+    }
+    // Shift+Enter will insert newline naturally
+  };
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="card max-w-lg w-full">
@@ -92,13 +101,14 @@ export default function TimelineForm({ workId, sessionId, onClose, onSuccess }: 
 
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
-              Note *
+              Note * (Shift+Enter for new line)
             </label>
             <textarea
               value={formData.label}
               onChange={(e) => setFormData({ ...formData, label: e.target.value })}
+              onKeyDown={handleKeyDown}
               required
-              className="input"
+              className="input resize-none"
               rows={3}
               placeholder="What are you working on?"
             />
