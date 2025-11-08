@@ -23,6 +23,16 @@ export interface Work {
   hourly_rate?: number;
   status: 'active' | 'archived' | 'completed';
   tags?: string[];
+  group_id?: number | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface WorkGroup {
+  id: number;
+  user_id: number;
+  title: string;
+  display_order: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -31,10 +41,13 @@ export interface TimeSession {
   id: number;
   work_id: number;
   user_id: number;
+  username?: string; // Included via JOIN for session ownership display
   start_time: Date;
   end_time?: Date;
   duration_ms?: number;
   is_running: boolean;
+  title?: string;
+  color?: string;
   created_at: Date;
   updated_at: Date;
 }

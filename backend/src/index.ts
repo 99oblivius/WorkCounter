@@ -12,13 +12,16 @@ import './types/index.js';
 
 import authRoutes from './routes/auth.js';
 import worksRoutes from './routes/works.js';
+import workGroupsRoutes from './routes/workGroups.js';
 import workStreamRoutes from './routes/workStream.js';
+import userStreamRoutes from './routes/userStream.js';
 import timeSessionsRoutes from './routes/timeSessions.js';
 import timelineEntriesRoutes from './routes/timelineEntries.js';
 import statsRoutes from './routes/stats.js';
 import fileStorageRoutes from './routes/fileStorage.js';
 import workSharingRoutes from './routes/workSharing.js';
 import settingsRoutes from './routes/settings.js';
+import userSettingsRoutes from './routes/userSettings.js';
 import userPermissionsRoutes from './routes/userPermissions.js';
 import adminUsersRoutes from './routes/admin/users.js';
 import adminSettingsRoutes from './routes/admin/settings.js';
@@ -111,15 +114,22 @@ app.use(
 app.use(csrfProtection);
 
 app.use('/api/auth', authRoutes);
-// SSE endpoint for real-time work updates (MUST be registered before /api/works to avoid route conflicts)
+
+// SSE endpoints for real-time updates
+// User-level SSE for dashboard (works list, running sessions)
+app.use('/api/user', userStreamRoutes);
+// Work-level SSE for work detail page (MUST be registered before /api/works to avoid route conflicts)
 app.use('/api/works', workStreamRoutes);
+
 app.use('/api/works', worksRoutes);
+app.use('/api/work-groups', workGroupsRoutes);
 app.use('/api/sessions', timeSessionsRoutes);
 app.use('/api/timeline', timelineEntriesRoutes);
 app.use('/api/stats', statsRoutes);
 app.use('/api/files', fileStorageRoutes);
 app.use('/api/work-sharing', workSharingRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/user-settings', userSettingsRoutes);
 app.use('/api/user-permissions', userPermissionsRoutes);
 
 // Admin routes - Strict CSRF protection

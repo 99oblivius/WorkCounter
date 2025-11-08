@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
-import { worksApi } from '../services/api';
+import { worksApi, workGroupsApi } from '../services/api';
 import type { Work } from '../types';
 
 interface WorkFormProps {
@@ -17,6 +17,16 @@ export default function WorkForm({ work, onClose, onSuccess }: WorkFormProps) {
     clientName: work?.client_name || '',
     hourlyRate: work?.hourly_rate?.toString() || '',
     tags: work?.tags?.join(', ') || '',
+    groupId: work?.group_id?.toString() || '',
+  });
+
+  // Fetch work groups for dropdown
+  const { data: groups = [] } = useQuery({
+    queryKey: ['work-groups'],
+    queryFn: async () => {
+      const response = await workGroupsApi.getAll();
+      return response.data;
+    },
   });
 
   // Update form data when work prop changes
@@ -28,6 +38,7 @@ export default function WorkForm({ work, onClose, onSuccess }: WorkFormProps) {
         clientName: work.client_name || '',
         hourlyRate: work.hourly_rate?.toString() || '',
         tags: work.tags?.join(', ') || '',
+        groupId: work.group_id?.toString() || '',
       });
     }
   }, [work]);
@@ -40,6 +51,7 @@ export default function WorkForm({ work, onClose, onSuccess }: WorkFormProps) {
         clientName: data.clientName || undefined,
         hourlyRate: data.hourlyRate ? parseFloat(data.hourlyRate) : undefined,
         tags: data.tags ? data.tags.split(',').map(t => t.trim()).filter(Boolean) : undefined,
+        groupId: data.groupId ? parseInt(data.groupId) : null,
       };
 
       if (work) {
@@ -136,6 +148,22 @@ export default function WorkForm({ work, onClose, onSuccess }: WorkFormProps) {
               className="input"
               placeholder="development, design, consulting (comma-separated)"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Group (optional)
+            </label>
+            <select
+              value={formData.groupId}
+              onChange={(e) => setFormData({ ...formData, groupId: e.target.value })}
+              className="input"
+            >
+              <option value="">None (ungrouped)</option>
+              {groups.map(group => (
+                <option key={group.id} value={group.id}>{group.title}</option>
+              ))}
+            </select>
           </div>
 
           <div className="flex space-x-3 pt-4">

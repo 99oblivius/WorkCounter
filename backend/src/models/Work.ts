@@ -41,10 +41,11 @@ export class WorkModel {
     clientName?: string;
     hourlyRate?: number;
     tags?: string[];
+    groupId?: number | null;
   }): Promise<Work> {
     const result = await query<Work>(
-      `INSERT INTO works (user_id, title, description, client_name, hourly_rate, tags)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO works (user_id, title, description, client_name, hourly_rate, tags, group_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         data.userId,
@@ -53,6 +54,7 @@ export class WorkModel {
         data.clientName || null,
         data.hourlyRate || null,
         data.tags || null,
+        data.groupId || null,
       ]
     );
     return result.rows[0];
@@ -90,6 +92,10 @@ export class WorkModel {
     if (data.tags !== undefined) {
       fields.push(`tags = $${paramCount++}`);
       values.push(data.tags);
+    }
+    if (data.group_id !== undefined) {
+      fields.push(`group_id = $${paramCount++}`);
+      values.push(data.group_id);
     }
 
     values.push(id, userId);

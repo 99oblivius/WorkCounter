@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Work, TimeSession, TimelineEntry, User, StatsOverview, FileStorageRecord } from '../types';
+import type { Work, WorkGroup, TimeSession, TimelineEntry, User, StatsOverview, FileStorageRecord } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 export { API_URL };
@@ -76,13 +76,25 @@ export const worksApi = {
   delete: (id: number) => api.delete(`/works/${id}`),
 };
 
+export const workGroupsApi = {
+  getAll: () => api.get<WorkGroup[]>('/work-groups'),
+  create: (title: string) => api.post<WorkGroup>('/work-groups', { title }),
+  update: (id: number, data: { title?: string; displayOrder?: number }) =>
+    api.patch<WorkGroup>(`/work-groups/${id}`, data),
+  delete: (id: number) => api.delete(`/work-groups/${id}`),
+  reorder: (groupOrders: { id: number; displayOrder: number }[]) =>
+    api.post('/work-groups/reorder', { groupOrders }),
+};
+
 export const sessionsApi = {
   getRunning: () => api.get<TimeSession | null>('/sessions/running'),
+  // FIX BUG 3: Get all running sessions across accessible works (for dashboard)
+  getAllRunning: () => api.get<TimeSession[]>('/sessions/running/all'),
   getByWorkId: (workId: number) => api.get<TimeSession[]>(`/sessions/work/${workId}`),
   getById: (id: number) => api.get<TimeSession>(`/sessions/${id}`),
   start: (workId: number) => api.post<TimeSession>('/sessions/start', { workId }),
   stop: (id: number) => api.post<TimeSession>(`/sessions/${id}/stop`),
-  update: (id: number, data: { startTime?: string; endTime?: string }) =>
+  update: (id: number, data: { startTime?: string; endTime?: string; title?: string | null; color?: string | null }) =>
     api.patch<TimeSession>(`/sessions/${id}`, data),
   delete: (id: number) => api.delete(`/sessions/${id}`),
   getStats: (workId: number) => api.get<{ totalDuration: number }>(`/sessions/work/${workId}/stats`),
@@ -94,9 +106,9 @@ export const timelineApi = {
   getByWorkId: (workId: number) =>
     api.get<TimelineEntry[]>(`/timeline/work/${workId}`),
   getById: (id: number) => api.get<TimelineEntry>(`/timeline/${id}`),
-  create: (data: { timeSessionId: number; workId: number; timestamp: string; label?: string; activityType?: string }) =>
+  create: (data: { timeSessionId: number; workId: number; timestamp: string; label?: string; activityType?: string; color?: string }) =>
     api.post<TimelineEntry>('/timeline', data),
-  update: (id: number, data: { timestamp?: string; label?: string; activityType?: string | null }) =>
+  update: (id: number, data: { timestamp?: string; label?: string; activityType?: string | null; color?: string | null }) =>
     api.patch<TimelineEntry>(`/timeline/${id}`, data),
   delete: (id: number) => api.delete(`/timeline/${id}`),
   uploadImages: (entryId: number, files: File[], onProgress?: (progress: number) => void) => {
@@ -156,4 +168,11 @@ export const filesApi = {
   // Get tus upload endpoint
   getTusEndpoint: () =>
     `${API_URL}/api/files/upload`,
+};
+
+export const userSettingsApi = {
+  getAll: () => api.get<Record<string, string>>('/user-settings'),
+  update: (settings: Record<string, string>) => api.patch('/user-settings', settings),
+  updateSingle: (key: string, value: string) => api.put(`/user-settings/${key}`, { value }),
+  deleteSingle: (key: string) => api.delete(`/user-settings/${key}`),
 };

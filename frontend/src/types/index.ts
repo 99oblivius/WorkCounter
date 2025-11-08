@@ -13,6 +13,16 @@ export interface Work {
   hourly_rate?: number;
   status: 'active' | 'archived' | 'completed';
   tags?: string[];
+  group_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkGroup {
+  id: number;
+  user_id: number;
+  title: string;
+  display_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -21,10 +31,13 @@ export interface TimeSession {
   id: number;
   work_id: number;
   user_id: number;
+  username?: string; // Included via JOIN for session ownership display
   start_time: string;
   end_time?: string;
   duration_ms?: number;
   is_running: boolean;
+  title?: string;
+  color?: string;
   created_at: string;
   updated_at: string;
 }
@@ -69,6 +82,7 @@ export interface FileStorageRecord {
   id: number;
   work_id: number;
   user_id: number;
+  username?: string; // Included via JOIN for file ownership display
   filename: string;
   original_name: string;
   display_name: string;
