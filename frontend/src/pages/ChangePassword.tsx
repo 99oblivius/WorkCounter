@@ -152,7 +152,9 @@ export default function ChangePassword() {
                 />
                 <button
                   type="button"
-                  onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                  onPointerDown={() => setShowCurrentPassword(true)}
+                  onPointerUp={() => setShowCurrentPassword(false)}
+                  onPointerLeave={() => setShowCurrentPassword(false)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
                   tabIndex={-1}
                 >
@@ -180,7 +182,9 @@ export default function ChangePassword() {
                 />
                 <button
                   type="button"
-                  onClick={() => setShowNewPassword(!showNewPassword)}
+                  onPointerDown={() => setShowNewPassword(true)}
+                  onPointerUp={() => setShowNewPassword(false)}
+                  onPointerLeave={() => setShowNewPassword(false)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
                   tabIndex={-1}
                 >
@@ -208,7 +212,9 @@ export default function ChangePassword() {
                 />
                 <button
                   type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  onPointerDown={() => setShowConfirmPassword(true)}
+                  onPointerUp={() => setShowConfirmPassword(false)}
+                  onPointerLeave={() => setShowConfirmPassword(false)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
                   tabIndex={-1}
                 >
