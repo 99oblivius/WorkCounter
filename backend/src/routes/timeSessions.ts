@@ -8,9 +8,18 @@ import { WorkAccessService } from '../services/workAccessService.js';
 import { TimelineEntryModel } from '../models/TimelineEntry.js';
 import { minioService } from '../services/minioService.js';
 import { sseService } from '../services/sseService.js';
+import { query } from '../config/database.js';
 import '../types/index.js';
 
 const router = Router();
+
+// Simple in-memory cache for running sessions (5 second TTL)
+interface CachedSessions {
+  data: any[];
+  timestamp: number;
+}
+const runningSessionsCache = new Map<number, CachedSessions>();
+const CACHE_TTL = 5000; // 5 seconds
 
 const startSessionSchema = z.object({
   workId: z.number().int().positive(),
@@ -19,6 +28,8 @@ const startSessionSchema = z.object({
 const updateSessionSchema = z.object({
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional(),
+  title: z.string().max(255).nullable().optional(),
+  color: z.enum(['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'gray']).nullable().optional(),
 });
 
 router.use(requireAuth);
@@ -28,6 +39,45 @@ router.get('/running', async (req, res, next) => {
     const userId = req.session.user!.userId;
     const session = await TimeSessionModel.findRunningSession(userId);
     res.json(session);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// FIX BUG 3: Get all running sessions across all accessible works
+// This allows the dashboard to show running timers from shared works
+// PERFORMANCE: Cached for 5 seconds to reduce DB load from dashboard polling
+router.get('/running/all', async (req, res, next) => {
+  try {
+    const userId = req.session.user!.userId;
+
+    // Check cache first
+    const cached = runningSessionsCache.get(userId);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return res.json(cached.data);
+    }
+
+    // Query all running sessions where user has access to the work
+    // Include username for session ownership display
+    const result = await query<import('../types/index.js').TimeSession>(
+      `SELECT DISTINCT ts.*, u.username
+       FROM time_sessions ts
+       INNER JOIN work_access wa ON ts.work_id = wa.work_id
+       INNER JOIN users u ON ts.user_id = u.id
+       WHERE ts.is_running = true
+         AND wa.user_id = $1
+         AND wa.can_view = true
+       ORDER BY ts.start_time DESC`,
+      [userId]
+    );
+
+    // Update cache
+    runningSessionsCache.set(userId, {
+      data: result.rows,
+      timestamp: Date.now()
+    });
+
+    res.json(result.rows);
   } catch (error) {
     next(error);
   }
@@ -98,8 +148,19 @@ router.post('/start', async (req, res, next) => {
       startTime: new Date(),
     });
 
-    // Emit SSE event for real-time updates
+    // Invalidate running sessions cache for user
+    runningSessionsCache.delete(userId);
+
+    // Emit SSE event for real-time updates (work-level stream)
     await sseService.emitWorkUpdate(workId, 'session:start', session);
+
+    // Emit running sessions update to all users with access (user-level stream)
+    const usersWithAccess = await WorkAccessService.getUsersWithAccess(workId);
+    const allRunningSessions = await TimeSessionModel.findAllRunningForUser(userId);
+    for (const userWithAccess of usersWithAccess) {
+      const userSessions = await TimeSessionModel.findAllRunningForUser(userWithAccess);
+      await sseService.emitUserUpdate(userWithAccess, 'sessions:activity', userSessions);
+    }
 
     res.status(201).json(session);
   } catch (error) {
@@ -140,8 +201,18 @@ router.post('/:id/stop', async (req, res, next) => {
 
     const stoppedSession = await TimeSessionModel.stopWithAccess(id, new Date());
 
-    // Emit SSE event for real-time updates
+    // Invalidate running sessions cache for user
+    runningSessionsCache.delete(userId);
+
+    // Emit SSE event for real-time updates (work-level stream)
     await sseService.emitWorkUpdate(session.work_id, 'session:stop', stoppedSession);
+
+    // Emit running sessions update to all users with access (user-level stream)
+    const usersWithAccess = await WorkAccessService.getUsersWithAccess(session.work_id);
+    for (const userWithAccess of usersWithAccess) {
+      const userSessions = await TimeSessionModel.findAllRunningForUser(userWithAccess);
+      await sseService.emitUserUpdate(userWithAccess, 'sessions:activity', userSessions);
+    }
 
     res.json(stoppedSession);
   } catch (error) {
@@ -179,6 +250,8 @@ router.patch('/:id', async (req, res, next) => {
     const session = await TimeSessionModel.updateWithoutUserFilter(id, {
       startTime: data.startTime ? new Date(data.startTime) : undefined,
       endTime: data.endTime ? new Date(data.endTime) : undefined,
+      title: data.title !== undefined ? data.title : undefined,
+      color: data.color !== undefined ? data.color : undefined,
     });
 
     if (!session) {

@@ -32,10 +32,13 @@ export class TimeSessionModel {
   static async findByWorkIdWithAccess(workId: number): Promise<TimeSession[]> {
     // Used when authorization is already checked by middleware
     // Returns all sessions for the work regardless of user
+    // Include username for session ownership display
     const result = await query<TimeSession>(
-      `SELECT * FROM time_sessions
-       WHERE work_id = $1
-       ORDER BY start_time DESC`,
+      `SELECT ts.*, u.username
+       FROM time_sessions ts
+       INNER JOIN users u ON ts.user_id = u.id
+       WHERE ts.work_id = $1
+       ORDER BY ts.start_time DESC`,
       [workId]
     );
     return result.rows;
@@ -55,6 +58,25 @@ export class TimeSessionModel {
       [workId, userId]
     );
     return result.rows[0] || null;
+  }
+
+  /**
+   * Find all running sessions across all works the user has access to
+   * Used for user-level SSE stream to show "Active" indicators on dashboard
+   */
+  static async findAllRunningForUser(userId: number): Promise<TimeSession[]> {
+    const result = await query<TimeSession>(
+      `SELECT DISTINCT ts.*, u.username
+       FROM time_sessions ts
+       INNER JOIN work_access wa ON ts.work_id = wa.work_id
+       INNER JOIN users u ON ts.user_id = u.id
+       WHERE ts.is_running = true
+         AND wa.user_id = $1
+         AND wa.can_view = true
+       ORDER BY ts.start_time DESC`,
+      [userId]
+    );
+    return result.rows;
   }
 
   static async create(data: {
@@ -101,7 +123,7 @@ export class TimeSessionModel {
   static async update(
     id: number,
     userId: number,
-    data: { startTime?: Date; endTime?: Date }
+    data: { startTime?: Date; endTime?: Date; title?: string | null; color?: string | null }
   ): Promise<TimeSession> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -116,6 +138,14 @@ export class TimeSessionModel {
       values.push(data.endTime);
       fields.push(`duration_ms = EXTRACT(EPOCH FROM ($${paramCount - 1} - start_time)) * 1000`);
       fields.push(`is_running = false`);
+    }
+    if (data.title !== undefined) {
+      fields.push(`title = $${paramCount++}`);
+      values.push(data.title);
+    }
+    if (data.color !== undefined) {
+      fields.push(`color = $${paramCount++}`);
+      values.push(data.color);
     }
 
     values.push(id, userId);
@@ -144,7 +174,7 @@ export class TimeSessionModel {
    */
   static async updateWithoutUserFilter(
     id: number,
-    data: { startTime?: Date; endTime?: Date }
+    data: { startTime?: Date; endTime?: Date; title?: string | null; color?: string | null }
   ): Promise<TimeSession | null> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -159,6 +189,14 @@ export class TimeSessionModel {
       values.push(data.endTime);
       fields.push(`duration_ms = EXTRACT(EPOCH FROM ($${paramCount - 1} - start_time)) * 1000`);
       fields.push(`is_running = false`);
+    }
+    if (data.title !== undefined) {
+      fields.push(`title = $${paramCount++}`);
+      values.push(data.title);
+    }
+    if (data.color !== undefined) {
+      fields.push(`color = $${paramCount++}`);
+      values.push(data.color);
     }
 
     if (fields.length === 0) {
