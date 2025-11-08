@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download, Share2, LogOut } from 'lucide-react';
+import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download, Share2, LogOut, Users } from 'lucide-react';
 import { worksApi, sessionsApi, timelineApi, authApi } from '../services/api';
 import { workSharingApi } from '../services/adminApi';
 import { useTimer, formatDuration, formatDurationShort } from '../hooks/useTimer';
@@ -13,6 +13,7 @@ import TimelineForm from '../components/TimelineForm';
 import VisualTimeline from '../components/VisualTimeline';
 import QuickNoteInput from '../components/QuickNoteInput';
 import EditTimelineModal from '../components/EditTimelineModal';
+import EditSessionModal from '../components/EditSessionModal';
 import FileStorageSection from '../components/FileStorageSection';
 import WorkSharingModal from '../components/WorkSharingModal';
 import type { TimeSession, TimelineEntry } from '../types';
@@ -27,6 +28,7 @@ export default function WorkDetail() {
   const [showTimelineForm, setShowTimelineForm] = useState(false);
   const [scrollToSessionId, setScrollToSessionId] = useState<number | null>(null);
   const [editingEntry, setEditingEntry] = useState<TimelineEntry | null>(null);
+  const [editingSession, setEditingSession] = useState<TimeSession | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
 
   // Fetch work permissions for current user
@@ -124,6 +126,13 @@ export default function WorkDetail() {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
       queryClient.invalidateQueries({ queryKey: ['timeline'] });
     },
+    onError: (error: any) => {
+      if (error.response?.status === 403) {
+        alert('Permission denied: You do not have permission to stop this timer. Manager permission required to stop others\' sessions.');
+      } else {
+        alert('Failed to stop timer: ' + (error.response?.data?.error || error.message || 'Unknown error'));
+      }
+    },
   });
 
   const deleteMutation = useMutation({
@@ -142,7 +151,7 @@ export default function WorkDetail() {
   });
 
   const updateTimelineMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: { label?: string; activityType?: string | null } }) =>
+    mutationFn: ({ id, data }: { id: number; data: { label?: string; activityType?: string | null; tags?: string[] | null } }) =>
       timelineApi.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['timeline'] });
@@ -448,7 +457,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               {work?.tags && work.tags.length > 0 && (
                 <div className="flex flex-wrap gap-2 mt-3">
                   {work.tags.map((tag: string, i: number) => (
-                    <span key={i} className="text-sm bg-dark-border px-3 py-1 rounded text-gray-400">
+                    <span key={i} className="tag tag-lg">
                       {tag}
                     </span>
                   ))}
@@ -458,48 +467,11 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 flex-shrink-0">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6 flex-shrink-0">
+          {/* Primary timer card */}
           <div className="card">
             <div className="flex items-center space-x-3 mb-2">
-              <Play className="text-purple-500" size={20} />
-              <span className="text-sm text-gray-400">Timer</span>
-            </div>
-            {runningSession ? (
-              <div className="space-y-2">
-                <p className="text-2xl font-mono font-bold text-gray-100">
-                  {formatDuration(elapsed)}
-                </p>
-                {permissions.canCreate && (
-                  <button
-                    onClick={handleStopTimer}
-                    className="btn btn-danger btn-sm flex items-center space-x-2 w-full justify-center"
-                  >
-                    <Pause size={14} />
-                    <span>Stop</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              <>
-                {permissions.canCreate ? (
-                  <button
-                    onClick={handleStartTimer}
-                    disabled={startMutation.isPending}
-                    className="btn btn-primary btn-sm flex items-center space-x-2 w-full justify-center mt-2"
-                  >
-                    <Play size={14} />
-                    <span>Start</span>
-                  </button>
-                ) : (
-                  <p className="text-sm text-gray-500 mt-2">No active timer</p>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="flex items-center space-x-3 mb-2">
-              <Clock className="text-blue-500" size={20} />
+              <Clock className="text-accent" size={20} />
               <span className="text-sm text-gray-400">Total Time</span>
             </div>
             {isLoading ? (
@@ -509,49 +481,85 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               </>
             ) : (
               <>
-                <p className="text-2xl font-bold text-gray-100">
-                  {formatDuration(stats?.totalDuration || 0)}
+                <p className="text-2xl font-bold text-gray-100 font-mono">
+                  {formatDuration((stats?.totalDuration || 0) + (runningSession ? elapsed : 0))}
                 </p>
-                <p className="text-sm text-gray-500 mt-1">
-                  {totalHours.toFixed(2)} hours
-                </p>
+                {runningSession ? (
+                  <>
+                    <p className="text-sm text-accent-light mt-1">
+                      Current session: {formatDuration(elapsed)}
+                    </p>
+                    {permissions.canCreate && (
+                      <button
+                        onClick={handleStopTimer}
+                        className="btn btn-danger btn-sm flex items-center space-x-2 w-full justify-center mt-2"
+                      >
+                        <Pause size={14} />
+                        <span>Stop Timer</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {totalHours.toFixed(2)} hours
+                    </p>
+                    {permissions.canCreate && (
+                      <button
+                        onClick={handleStartTimer}
+                        disabled={startMutation.isPending}
+                        className="btn btn-primary btn-sm flex items-center space-x-2 w-full justify-center mt-2"
+                      >
+                        <Play size={14} />
+                        <span>Start Timer</span>
+                      </button>
+                    )}
+                  </>
+                )}
               </>
             )}
           </div>
 
-          {(work?.hourly_rate || isLoading) && (
-            <div className="card">
-              <div className="flex items-center space-x-3 mb-2">
-                <DollarSign className="text-green-500" size={20} />
-                <span className="text-sm text-gray-400">Estimated Earnings</span>
-              </div>
-              {isLoading ? (
-                <>
-                  <div className="h-8 bg-dark-border/50 rounded animate-pulse w-32 mb-2"></div>
-                  <div className="h-4 bg-dark-border/50 rounded animate-pulse w-24"></div>
-                </>
-              ) : (
-                <>
-                  <p className="text-2xl font-bold text-gray-100">
-                    ${estimatedEarnings?.toFixed(2) || '0.00'}
-                  </p>
-                  <p className="text-sm text-gray-500 mt-1">
-                    ${work?.hourly_rate}/hour
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          <div className="card">
-            <div className="flex items-center space-x-3 mb-2">
-              <Play className="text-purple-500" size={20} />
-              <span className="text-sm text-gray-400">Sessions</span>
-            </div>
+          {/* Consolidated stats card - secondary styling */}
+          <div className="card bg-dark-bg border-dark-border lg:col-span-2">
             {isLoading ? (
-              <div className="h-8 bg-dark-border/50 rounded animate-pulse w-16"></div>
+              <div className="grid grid-cols-2 gap-6">
+                <div>
+                  <div className="h-4 bg-dark-border/50 rounded animate-pulse w-24 mb-2"></div>
+                  <div className="h-6 bg-dark-border/50 rounded animate-pulse w-32"></div>
+                </div>
+                <div>
+                  <div className="h-4 bg-dark-border/50 rounded animate-pulse w-20 mb-2"></div>
+                  <div className="h-6 bg-dark-border/50 rounded animate-pulse w-16"></div>
+                </div>
+              </div>
             ) : (
-              <p className="text-2xl font-bold text-gray-100">{sessions.length}</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                {/* Sessions */}
+                <div>
+                  <div className="flex items-center space-x-2 mb-1">
+                    <Play className="text-gray-500" size={16} />
+                    <span className="text-xs text-gray-500 uppercase tracking-wide">Sessions</span>
+                  </div>
+                  <p className="text-xl font-bold text-gray-100">{sessions.length}</p>
+                </div>
+
+                {/* Earnings (if hourly rate is set) */}
+                {work?.hourly_rate && (
+                  <div>
+                    <div className="flex items-center space-x-2 mb-1">
+                      <DollarSign className="text-gray-500" size={16} />
+                      <span className="text-xs text-gray-500 uppercase tracking-wide">Earnings</span>
+                    </div>
+                    <p className="text-xl font-bold text-gray-100">
+                      ${estimatedEarnings?.toFixed(2) || '0.00'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      ${work.hourly_rate}/hour
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -576,6 +584,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 sessions={sessions}
                 runningSession={runningSession || null}
                 scrollToSessionId={scrollToSessionId}
+                currentUserId={user?.userId}
                 onEditEntry={handleEditEntry}
                 onDeleteEntry={handleDeleteEntry}
                 canEditEntry={(entry) => permissions.canEditResource(entry.user_id)}
@@ -591,6 +600,9 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
               <QuickNoteInput
                 workId={workId}
                 sessionId={runningSession.id}
+                sessionOwnerId={runningSession.user_id}
+                sessionOwnerName={runningSession.username}
+                currentUserId={user?.userId}
                 onSuccess={() => {
                   queryClient.invalidateQueries({ queryKey: ['timeline'] });
                 }}
@@ -641,35 +653,73 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                     key={session.id}
                     className="w-full bg-dark-bg border border-dark-border hover:border-gray-600 rounded p-2 text-xs transition-colors group relative"
                   >
+                    {/* Color indicator bar */}
+                    {session.color && (
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l bg-${session.color}-500`} />
+                    )}
+
                     <div
                       onClick={() => setScrollToSessionId(session.id)}
                       className="cursor-pointer"
+                      style={{ paddingLeft: session.color ? '8px' : '0' }}
                     >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <p className="text-gray-400">
-                            {new Date(session.start_time).toLocaleDateString()}
-                          </p>
-                          <p className="text-gray-500">
-                            {new Date(session.start_time).toLocaleTimeString()}
-                          </p>
+                      <div className="flex justify-between items-center mb-1">
+                        <div className="flex items-center gap-2 flex-1">
+                          <div>
+                            <p className="text-gray-400">
+                              {new Date(session.start_time).toLocaleDateString()}
+                            </p>
+                            <p className="text-gray-500">
+                              {new Date(session.start_time).toLocaleTimeString()}
+                            </p>
+                          </div>
+                          {/* Session title - inline with date */}
+                          {session.title && (
+                            <span className="text-sm font-medium text-gray-100">
+                              • {session.title}
+                            </span>
+                          )}
                         </div>
                         <span className={`font-medium ${session.is_running ? 'text-green-500' : 'text-gray-400'}`}>
                           {session.is_running ? '🟢 Running' : formatDuration(session.duration_ms || 0)}
                         </span>
                       </div>
+                      {user && session.user_id !== user.userId && session.username && (
+                        <div className="flex items-center space-x-1 text-xs text-gray-400 bg-gray-500 bg-opacity-10 px-2 py-1 rounded mt-1">
+                          <Users size={10} />
+                          <span>by {session.username}</span>
+                        </div>
+                      )}
                     </div>
-                    {!session.is_running && user && permissions.canDeleteResource(session.user_id) && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteSession(session.id);
-                        }}
-                        className="absolute bottom-1 right-1 p-1 opacity-0 group-hover:opacity-100 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400 transition-opacity"
-                        title="Delete session"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+
+                    {/* Action buttons */}
+                    {!session.is_running && user && (
+                      <div className="absolute bottom-1 right-1 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {permissions.canEditResource(session.user_id) && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingSession(session);
+                            }}
+                            className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-accent-light"
+                            title="Edit session"
+                          >
+                            <Edit size={14} />
+                          </button>
+                        )}
+                        {permissions.canDeleteResource(session.user_id) && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteSession(session.id);
+                            }}
+                            className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400"
+                            title="Delete session"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))
@@ -709,6 +759,13 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
           entry={editingEntry}
           onClose={() => setEditingEntry(null)}
           onSave={handleSaveEntry}
+        />
+      )}
+
+      {editingSession && (
+        <EditSessionModal
+          session={editingSession}
+          onClose={() => setEditingSession(null)}
         />
       )}
 

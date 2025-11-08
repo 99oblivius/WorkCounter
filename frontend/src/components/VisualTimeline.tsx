@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Clock, Edit2, Trash2 } from 'lucide-react';
+import { Clock, Edit2, Trash2, Users } from 'lucide-react';
 import { formatDuration } from '../hooks/useTimer';
 import type { TimelineEntry, TimeSession } from '../types';
 import ImageGallery from './ImageGallery';
+import { getActivityTypeColor } from '../constants/activityTypes';
 
 interface VisualTimelineProps {
   entries: TimelineEntry[];
   sessions: TimeSession[];
   runningSession: TimeSession | null;
   scrollToSessionId: number | null;
+  currentUserId?: number; // For showing session ownership
   onEditEntry?: (entry: TimelineEntry) => void;
   onDeleteEntry?: (entryId: number) => void;
   canEditEntry?: (entry: TimelineEntry) => boolean;
@@ -21,20 +23,8 @@ type TimelineItem =
   | { type: 'session-end'; session: TimeSession; timestamp: number }
   | { type: 'now'; timestamp: number };
 
-const ACTIVITY_COLORS: Record<string, string> = {
-  'Development': 'bg-blue-500',
-  'Design': 'bg-purple-500',
-  'Meeting': 'bg-yellow-500',
-  'Research': 'bg-green-500',
-  'Review': 'bg-orange-500',
-  'Testing': 'bg-red-500',
-  'Documentation': 'bg-cyan-500',
-  'Planning': 'bg-pink-500',
-  'Bug Fix': 'bg-rose-500',
-  'Other': 'bg-gray-500',
-};
 
-export default function VisualTimeline({ entries, sessions, runningSession, scrollToSessionId, onEditEntry, onDeleteEntry, canEditEntry, canDeleteEntry }: VisualTimelineProps) {
+export default function VisualTimeline({ entries, sessions, runningSession, scrollToSessionId, currentUserId, onEditEntry, onDeleteEntry, canEditEntry, canDeleteEntry }: VisualTimelineProps) {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
   const sessionRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -161,22 +151,36 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
             return (
               <div
                 key={`session-start-${item.session.id}`}
-                className="relative mb-6"
+                className="relative mb-8"
               >
                 {/* Line connecting down to next item */}
                 {shouldDrawLineDown && (
-                  <div className="absolute left-6 top-[0.625rem] -bottom-6 w-0.5 bg-dark-border -translate-x-1/2" />
+                  <div className="absolute left-6 top-[0.625rem] -bottom-8 w-0.5 bg-dark-border -translate-x-1/2" />
                 )}
 
                 <div className="flex items-start">
-                  <div className="absolute left-6 -translate-x-1/2 w-3 h-3 rounded-full bg-green-500 ring-4 ring-dark-bg z-10" />
+                  {/* Color indicator or default green */}
+                  <div className={`absolute left-6 -translate-x-1/2 w-3 h-3 rounded-full ${item.session.color ? `bg-${item.session.color}-500` : 'bg-green-500'} ring-4 ring-dark-bg z-10`} />
                   <div className="ml-12 flex-1">
                     <div className="p-3">
                       <div className="text-xs text-gray-500 mb-1">
                         {new Date(item.session.start_time).toLocaleString()}
                       </div>
-                      <div className="text-sm text-green-500 font-medium">
-                        Session Started {item.session.is_running && '🟢'}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="text-sm text-green-500 font-medium">
+                          Session Started {item.session.is_running && '🟢'}
+                        </div>
+                        {item.session.title && (
+                          <span className="text-sm font-medium text-gray-100">
+                            {item.session.title}
+                          </span>
+                        )}
+                        {currentUserId && item.session.user_id !== currentUserId && item.session.username && (
+                          <div className="flex items-center space-x-1 text-xs text-gray-400 bg-gray-500 bg-opacity-10 px-2 py-0.5 rounded">
+                            <Users size={10} />
+                            <span>by {item.session.username}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -186,13 +190,14 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
           }
 
           if (item.type === 'entry') {
-            const colorClass = ACTIVITY_COLORS[item.entry.activity_type || 'Other'] || ACTIVITY_COLORS.Other;
+            const activityColor = getActivityTypeColor(item.entry.activity_type);
+            const colorClass = activityColor ? activityColor.bgColor : 'bg-gray-500';
 
             return (
-              <div key={`entry-${item.entry.id}`} className="relative mb-6">
+              <div key={`entry-${item.entry.id}`} className="relative mb-8">
                 {/* Line connecting down to next item */}
                 {shouldDrawLineDown && (
-                  <div className="absolute left-6 top-[0.625rem] -bottom-6 w-0.5 bg-dark-border -translate-x-1/2" />
+                  <div className="absolute left-6 top-[0.625rem] -bottom-8 w-0.5 bg-dark-border -translate-x-1/2" />
                 )}
 
                 {/* Entry marker */}
@@ -206,7 +211,7 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                         {onEditEntry && canEditEntry && canEditEntry(item.entry) && (
                           <button
                             onClick={() => onEditEntry(item.entry)}
-                            className="p-1 bg-dark-surface hover:bg-dark-hover rounded text-gray-400 hover:text-blue-400 border border-dark-border"
+                            className="p-1 bg-dark-surface hover:bg-dark-hover rounded text-gray-400 hover:text-accent-light border border-dark-border"
                             title="Edit note"
                           >
                             <Edit2 size={14} />
@@ -231,14 +236,16 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                         <div className="text-xs text-gray-500 flex-shrink-0">
                           {new Date(item.entry.timestamp).toLocaleTimeString()}
                         </div>
-                        {item.entry.activity_type && (
-                          <span className={`text-xs px-2 py-0.5 rounded text-white ${colorClass} flex-shrink-0`}>
-                            {item.entry.activity_type}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {item.entry.activity_type && activityColor && (
+                            <span className={`text-xs px-2 py-0.5 rounded border ${activityColor.borderColor} ${activityColor.bgColor} bg-opacity-20 text-gray-300`}>
+                              {activityColor.label}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       {item.entry.label && (
-                        <p className="text-gray-100 text-sm leading-relaxed mb-2">{item.entry.label}</p>
+                        <p className="text-gray-100 text-sm leading-relaxed mb-2 whitespace-pre-wrap">{item.entry.label}</p>
                       )}
                       {item.entry.image_urls && item.entry.image_urls.length > 0 && (
                         <ImageGallery
@@ -262,11 +269,11 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                 ref={(el) => {
                   if (el) sessionRefs.current.set(item.session.id, el);
                 }}
-                className="relative mb-6"
+                className="relative mb-8"
               >
                 {/* Line connecting down to next item */}
                 {shouldDrawLineDown && (
-                  <div className="absolute left-6 top-[0.625rem] -bottom-6 w-0.5 bg-dark-border -translate-x-1/2" />
+                  <div className="absolute left-6 top-[0.625rem] -bottom-8 w-0.5 bg-dark-border -translate-x-1/2" />
                 )}
 
                 <div className="flex items-start">
@@ -288,18 +295,18 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
 
           if (item.type === 'now') {
             return (
-              <div key="now" className="relative mb-6">
+              <div key="now" className="relative mb-8">
                 {/* Line connecting down to next item */}
                 {shouldDrawLineDown && (
-                  <div className="absolute left-6 top-[0.75rem] -bottom-6 w-0.5 bg-dark-border -translate-x-1/2" />
+                  <div className="absolute left-6 top-[0.75rem] -bottom-8 w-0.5 bg-dark-border -translate-x-1/2" />
                 )}
 
                 <div className="flex items-start animate-pulse">
-                  <div className="absolute left-6 -translate-x-1/2 w-4 h-4 rounded-full bg-blue-500 ring-4 ring-blue-500/20 z-10">
-                    <div className="absolute inset-0 rounded-full bg-blue-500 animate-ping opacity-75" />
+                  <div className="absolute left-6 -translate-x-1/2 w-4 h-4 rounded-full bg-accent ring-4 ring-accent/20 z-10">
+                    <div className="absolute inset-0 rounded-full bg-accent animate-ping opacity-75" />
                   </div>
                   <div className="ml-12">
-                    <div className="text-xs text-blue-400 font-medium mb-1">
+                    <div className="text-xs text-accent-light font-medium mb-1">
                       NOW - {new Date(currentTime).toLocaleTimeString()}
                     </div>
                     <div className="text-sm text-gray-400">Currently working...</div>
