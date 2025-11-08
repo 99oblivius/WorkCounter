@@ -1,10 +1,11 @@
-import { Download, Trash2, X, Loader2, AlertCircle } from 'lucide-react';
+import { Download, Trash2, X, Loader2, AlertCircle, Users } from 'lucide-react';
 import FileTypeIcon from './FileIcon';
 import { formatBytes, formatSpeed } from '../utils/format';
 import type { FileStorageRecord } from '../types';
 
 interface FileListItemProps {
   file: FileStorageRecord;
+  currentUserId?: number; // For showing file ownership
   uploadSpeed?: number; // bytes per second (only for uploading files)
   onDownload?: (fileId: number) => void;
   onDelete?: (fileId: number) => void;
@@ -17,6 +18,7 @@ interface FileListItemProps {
  */
 export default function FileListItem({
   file,
+  currentUserId,
   uploadSpeed = 0,
   onDownload,
   onDelete,
@@ -116,14 +118,22 @@ export default function FileListItem({
             </div>
           </div>
 
-          {/* File Size and Upload Date (for completed files) */}
+          {/* File Size, Upload Date, and Username (for completed files) */}
           {isCompleted && (
-            <p className="text-gray-500 mt-0.5">
-              {formatBytes(file.file_size)}
-              {file.uploaded_at && (
-                <span> • {new Date(file.uploaded_at).toLocaleDateString()}</span>
+            <div className="mt-0.5 flex items-center gap-2 flex-wrap">
+              <p className="text-gray-500">
+                {formatBytes(file.file_size)}
+                {file.uploaded_at && (
+                  <span> • {new Date(file.uploaded_at).toLocaleDateString()}</span>
+                )}
+              </p>
+              {currentUserId && file.user_id !== currentUserId && file.username && (
+                <div className="flex items-center space-x-1 text-xs text-gray-400 bg-gray-500 bg-opacity-10 px-2 py-0.5 rounded">
+                  <Users size={10} />
+                  <span>by {file.username}</span>
+                </div>
               )}
-            </p>
+            </div>
           )}
 
           {/* Progress Bar (for uploading files) */}

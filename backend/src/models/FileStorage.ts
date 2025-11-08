@@ -4,6 +4,7 @@ export interface FileStorageRecord {
   id: number;
   work_id: number;
   user_id: number;
+  username?: string; // Included via JOIN for file ownership display
   filename: string;
   original_name: string;
   display_name: string;
@@ -163,12 +164,15 @@ export class FileStorageModel {
 
   /**
    * Get all files for a work including in-progress (when authorization is already checked)
+   * Includes username for file ownership display
    */
   static async findAllByWorkIdWithAccess(workId: number): Promise<FileStorageRecord[]> {
     const result = await query<FileStorageRecord>(
-      `SELECT * FROM file_storage
-       WHERE work_id = $1
-       ORDER BY created_at DESC`,
+      `SELECT fs.*, u.username
+       FROM file_storage fs
+       INNER JOIN users u ON fs.user_id = u.id
+       WHERE fs.work_id = $1
+       ORDER BY fs.created_at DESC`,
       [workId]
     );
     return result.rows;

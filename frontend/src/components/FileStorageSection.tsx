@@ -265,6 +265,7 @@ export default function FileStorageSection({
           <FileListItem
             key={file.id}
             file={file}
+            currentUserId={userId}
             onDownload={handleDownload}
             onDelete={canDeleteResource && canDeleteResource(file.user_id) ? deleteMutation.mutate : undefined}
           />
