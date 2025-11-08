@@ -91,7 +91,9 @@ export class AuditService {
     const offset = filters.offset || 0;
 
     const result = await query(
-      `SELECT * FROM audit_logs ${whereClause}
+      `SELECT id, user_id, username, action, resource_type, resource_id,
+              details, user_agent, status, created_at
+       FROM audit_logs ${whereClause}
        ORDER BY created_at DESC
        LIMIT $${paramCount++} OFFSET $${paramCount}`,
       [...values, limit, offset]
