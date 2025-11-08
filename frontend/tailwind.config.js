@@ -13,6 +13,11 @@ export default {
           border: '#2a2a2a',
           hover: '#2f2f2f',
         },
+        accent: {
+          DEFAULT: 'var(--accent-color, #3b82f6)',
+          light: 'var(--accent-color-light, #93c5fd)',
+          hover: 'var(--accent-color-hover, #2563eb)',
+        },
       },
     },
   },

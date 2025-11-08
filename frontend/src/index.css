@@ -2,6 +2,135 @@
 @tailwind components;
 @tailwind utilities;
 
+/* CSS Custom Properties for theming */
+:root {
+  --accent-color: #3b82f6;
+  --accent-color-light: #93c5fd; /* Pastel/lighter version */
+  --accent-color-hover: #2563eb;
+}
+
+/* Dark theme (default) */
+.dark {
+  --bg-color: #0a0a0a;
+  --surface-color: #1a1a1a;
+  --border-color: #2a2a2a;
+  --hover-color: #2f2f2f;
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --text-tertiary: #9ca3af;
+}
+
+/* Light theme */
+.light {
+  --bg-color: #ffffff;
+  --surface-color: #f9fafb;
+  --border-color: #e5e7eb;
+  --hover-color: #f3f4f6;
+  --text-primary: #111827;
+  --text-secondary: #374151;
+  --text-tertiary: #6b7280;
+}
+
+.light body {
+  @apply bg-white text-gray-900;
+}
+
+.light .card {
+  @apply bg-gray-50 border-gray-200;
+}
+
+.light .bg-dark-bg {
+  @apply bg-white;
+}
+
+.light .bg-dark-surface {
+  @apply bg-gray-50;
+}
+
+.light .border-dark-border {
+  @apply border-gray-200;
+}
+
+.light .hover\:bg-dark-hover:hover {
+  @apply bg-gray-100;
+}
+
+.light .text-gray-100 {
+  @apply text-gray-900;
+}
+
+.light .text-gray-300 {
+  @apply text-gray-700;
+}
+
+.light .text-gray-400 {
+  @apply text-gray-600;
+}
+
+.light .text-gray-500 {
+  color: #6b7280;
+}
+
+.light input,
+.light textarea,
+.light select {
+  @apply bg-white border-gray-300 text-gray-900 placeholder-gray-400;
+}
+
+.light .btn-secondary {
+  @apply bg-white border-gray-300 text-gray-900 hover:bg-gray-50;
+}
+
+/* ===========================
+   Custom Themed Scrollbars
+   =========================== */
+
+/* Dark Theme Scrollbar Colors */
+.dark {
+  --scrollbar-track: #1f2937; /* gray-800 */
+  --scrollbar-thumb: #4b5563; /* gray-600 */
+  --scrollbar-thumb-hover: #6b7280; /* gray-500 */
+}
+
+/* Light Theme Scrollbar Colors */
+.light {
+  --scrollbar-track: #f3f4f6; /* gray-100 */
+  --scrollbar-thumb: #d1d5db; /* gray-300 */
+  --scrollbar-thumb-hover: #9ca3af; /* gray-400 */
+}
+
+/* Webkit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 6px;
+  border: 2px solid var(--scrollbar-track);
+  transition: background 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: var(--accent-color);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
 @layer base {
   * {
     @apply border-dark-border;
@@ -37,7 +166,17 @@
   }
 
   .btn-primary {
-    @apply bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500;
+    background-color: var(--accent-color);
+    @apply text-white focus:ring-2;
+    transition: background-color 0.15s;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--accent-color-hover);
+  }
+
+  .btn-primary:focus {
+    ring-color: var(--accent-color);
   }
 
   .btn-secondary {
@@ -84,5 +223,125 @@
     ::view-transition-new(root) {
       animation-duration: 0.3s;
     }
+  }
+
+  /* Theme-aware tags */
+  .tag {
+    @apply text-xs px-2 py-1 rounded;
+    @apply bg-dark-border text-gray-400;
+  }
+
+  .tag-lg {
+    @apply text-sm px-3 py-1;
+  }
+
+  .light .tag {
+    @apply bg-gray-200 text-gray-700;
+  }
+
+  /* Rainbow hover effect for color tag button */
+  .color-tag-button {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    color: var(--text-color);
+    transition: all 0.3s ease;
+    overflow: hidden;
+  }
+
+  .color-tag-button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      #ef4444 0%,      /* red */
+      #f59e0b 14.28%,  /* orange */
+      #eab308 28.56%,  /* yellow */
+      #22c55e 42.84%,  /* green */
+      #3b82f6 57.12%,  /* blue */
+      #a855f7 71.4%,   /* purple */
+      #ec4899 85.68%,  /* pink */
+      #6b7280 100%     /* gray */
+    );
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .color-tag-button:hover::before {
+    opacity: 1;
+  }
+
+  .color-tag-button:hover {
+    color: white;
+    border-color: transparent;
+  }
+
+  .color-tag-button svg,
+  .color-tag-button span {
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Activity picker button with diagonal stepped rainbow hover */
+  .activity-picker-button {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem;
+    color: var(--text-color);
+    transition: all 0.3s ease;
+    overflow: hidden;
+  }
+
+  .activity-picker-button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      45deg,
+      #ef4444 0px,
+      #ef4444 10px,
+      #f59e0b 10px,
+      #f59e0b 20px,
+      #eab308 20px,
+      #eab308 30px,
+      #22c55e 30px,
+      #22c55e 40px,
+      #3b82f6 40px,
+      #3b82f6 50px,
+      #a855f7 50px,
+      #a855f7 60px,
+      #ec4899 60px,
+      #ec4899 70px,
+      #6b7280 70px,
+      #6b7280 80px
+    );
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .activity-picker-button:hover::before {
+    opacity: 1;
+  }
+
+  .activity-picker-button:hover {
+    color: white;
+    border-color: transparent;
+  }
+
+  .activity-picker-button svg,
+  .activity-picker-button span {
+    position: relative;
+    z-index: 1;
   }
 }
