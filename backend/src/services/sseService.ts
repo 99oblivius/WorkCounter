@@ -33,12 +33,20 @@ interface SSEConnection {
   keepAliveTimer: NodeJS.Timeout;
 }
 
+interface UserSSEConnection {
+  userId: number;
+  res: Response;
+  keepAliveTimer: NodeJS.Timeout;
+}
+
 class SSEService {
   private connections: Map<string, SSEConnection> = new Map();
+  private userConnections: Map<string, UserSSEConnection> = new Map();
   private pubClient: RedisClientType | null = null;
   private subClient: RedisClientType | null = null;
   private isInitialized = false;
   private connectionCounter = 0;
+  private userConnectionCounter = 0;
 
   /**
    * Initialize Redis pub/sub clients
@@ -91,6 +99,20 @@ class SSEService {
    */
   private getWorkChannel(workId: number): string {
     return `work:${workId}:updates`;
+  }
+
+  /**
+   * Get Redis channel name for a user
+   */
+  private getUserChannel(userId: number): string {
+    return `user:${userId}:updates`;
+  }
+
+  /**
+   * Create unique connection ID for user-level connections
+   */
+  private getUserConnectionId(userId: number): string {
+    return `user:${userId}:${++this.userConnectionCounter}:${Date.now()}`;
   }
 
   /**
@@ -228,10 +250,129 @@ class SSEService {
   }
 
   /**
+   * Setup SSE connection for user-level updates (dashboard)
+   * Sends initial data snapshot and subscribes to updates
+   */
+  async setupUserConnection(
+    userId: number,
+    res: Response,
+    initialData: any
+  ): Promise<void> {
+    if (!this.isInitialized) {
+      throw new Error('SSE Service not initialized');
+    }
+
+    const connectionId = this.getUserConnectionId(userId);
+    const channel = this.getUserChannel(userId);
+
+    // Setup SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+
+    // Send initial snapshot
+    this.sendEvent(res, 'snapshot', initialData);
+
+    // Keep-alive ping every 30s to prevent connection timeout
+    const keepAliveTimer = setInterval(() => {
+      res.write(': ping\n\n');
+    }, 30000);
+
+    // Store connection
+    this.userConnections.set(connectionId, {
+      userId,
+      res,
+      keepAliveTimer,
+    });
+
+    console.log(`[User SSE] Connection established: user ${userId}`);
+
+    // Subscribe to user updates (if not already subscribed)
+    const subscriberCount = Array.from(this.userConnections.values())
+      .filter(conn => conn.userId === userId).length;
+
+    if (subscriberCount === 1) {
+      // First connection for this user - subscribe to channel
+      await this.subClient!.subscribe(channel, (message) => {
+        this.handleUserMessage(userId, message);
+      });
+      console.log(`[User SSE] Subscribed to channel: ${channel}`);
+    }
+
+    // Cleanup on disconnect
+    res.on('close', () => {
+      this.closeUserConnection(connectionId, userId);
+    });
+  }
+
+  /**
+   * Handle incoming Redis pub/sub message for user
+   */
+  private handleUserMessage(userId: number, message: string): void {
+    try {
+      const data = JSON.parse(message);
+
+      // Broadcast to all connections for this user
+      for (const [connectionId, conn] of this.userConnections.entries()) {
+        if (conn.userId === userId) {
+          this.sendEvent(conn.res, data.type, data.payload);
+        }
+      }
+    } catch (error) {
+      console.error('[User SSE] Failed to handle message:', error);
+    }
+  }
+
+  /**
+   * Close user SSE connection
+   */
+  private async closeUserConnection(connectionId: string, userId: number): Promise<void> {
+    const conn = this.userConnections.get(connectionId);
+    if (!conn) return;
+
+    // Clear keep-alive timer
+    clearInterval(conn.keepAliveTimer);
+
+    // Remove connection
+    this.userConnections.delete(connectionId);
+    console.log(`[User SSE] Connection closed: ${connectionId}`);
+
+    // Check if this was the last connection for this user
+    const remainingConnections = Array.from(this.userConnections.values())
+      .filter(c => c.userId === userId).length;
+
+    if (remainingConnections === 0) {
+      // Last connection - unsubscribe from channel
+      const channel = this.getUserChannel(userId);
+      await this.subClient!.unsubscribe(channel);
+      console.log(`[User SSE] Unsubscribed from channel: ${channel}`);
+    }
+  }
+
+  /**
+   * Emit update event for a user
+   * Called when works are shared/unshared or sessions change
+   */
+  async emitUserUpdate(userId: number, type: string, payload: any): Promise<void> {
+    if (!this.isInitialized || !this.pubClient) return;
+
+    const channel = this.getUserChannel(userId);
+    const message = JSON.stringify({ type, payload });
+
+    try {
+      await this.pubClient.publish(channel, message);
+      console.log(`[User SSE] Emitted ${type} for user ${userId}`);
+    } catch (error) {
+      console.error('[User SSE] Failed to emit event:', error);
+    }
+  }
+
+  /**
    * Get connection count (for monitoring)
    */
   getConnectionCount(): number {
-    return this.connections.size;
+    return this.connections.size + this.userConnections.size;
   }
 
   /**
@@ -240,12 +381,19 @@ class SSEService {
   async shutdown(): Promise<void> {
     console.log('[SSE] Shutting down...');
 
-    // Close all connections
+    // Close all work connections
     for (const [connectionId, conn] of this.connections.entries()) {
       clearInterval(conn.keepAliveTimer);
       conn.res.end();
     }
     this.connections.clear();
+
+    // Close all user connections
+    for (const [connectionId, conn] of this.userConnections.entries()) {
+      clearInterval(conn.keepAliveTimer);
+      conn.res.end();
+    }
+    this.userConnections.clear();
 
     // Disconnect Redis clients
     if (this.pubClient) {
