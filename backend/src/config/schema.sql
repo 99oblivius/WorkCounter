@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
-  authentik_id VARCHAR(255) UNIQUE NOT NULL,
+  authentik_id VARCHAR(255) UNIQUE, -- Legacy field, nullable for native auth users
   email VARCHAR(255) UNIQUE NOT NULL,
   username VARCHAR(255) NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
