@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuth } from './hooks/useAuth';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
+import UserSettings from './pages/UserSettings';
 import Dashboard from './pages/Dashboard';
 import WorkDetail from './pages/WorkDetail';
 import AdminLayout from './pages/Admin/AdminLayout';
@@ -49,6 +50,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <ChangePassword />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <UserSettings />
             </ProtectedRoute>
           }
         />

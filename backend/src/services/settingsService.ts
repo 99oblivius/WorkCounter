@@ -12,6 +12,7 @@ interface Setting {
   isPublic: boolean;
   minValue?: number;
   maxValue?: number;
+  defaultValue?: string;
 }
 
 export class SettingsService {
@@ -101,7 +102,8 @@ export class SettingsService {
       description: row.description,
       isPublic: row.is_public,
       minValue: row.min_value,
-      maxValue: row.max_value
+      maxValue: row.max_value,
+      defaultValue: row.default_value
     }));
   }
 
@@ -161,7 +163,17 @@ export class SettingsService {
     }
 
     const oldValue = setting.value;
-    const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
+    // Convert value to string based on type
+    let stringValue: string;
+    if (typeof value === 'string') {
+      stringValue = value;
+    } else if (typeof value === 'boolean') {
+      stringValue = value ? 'true' : 'false';
+    } else if (typeof value === 'number') {
+      stringValue = value.toString();
+    } else {
+      stringValue = JSON.stringify(value);
+    }
 
     // Update setting
     await query(
