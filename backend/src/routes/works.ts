@@ -19,6 +19,7 @@ const createWorkSchema = z.object({
   clientName: z.string().max(255).optional(),
   hourlyRate: z.number().positive().max(999999.99).optional(),  // SECURITY FIX: Max value
   tags: z.array(z.string().max(100)).max(20).optional(),  // SECURITY FIX: Max tag length and count
+  groupId: z.number().int().positive().nullable().optional(),
 });
 
 const updateWorkSchema = z.object({
@@ -28,6 +29,7 @@ const updateWorkSchema = z.object({
   hourlyRate: z.number().positive().max(999999.99).optional(),  // SECURITY FIX: Max value
   status: z.enum(['active', 'archived', 'completed']).optional(),
   tags: z.array(z.string().max(100)).max(20).optional(),  // SECURITY FIX: Max tag length and count
+  groupId: z.number().int().positive().nullable().optional(),
 });
 
 router.use(requireAuth);
@@ -101,6 +103,9 @@ router.post('/', async (req, res, next) => {
       ...data,
     });
 
+    // Emit SSE event to user's dashboard
+    await sseService.emitUserUpdate(userId, 'work:create', work);
+
     res.status(201).json(work);
   } catch (error) {
     next(error);
@@ -129,6 +134,7 @@ router.patch('/:id', requireWorkAccess('edit'), async (req, res, next) => {
     if (data.hourlyRate !== undefined) updateData.hourly_rate = data.hourlyRate;
     if (data.status !== undefined) updateData.status = data.status;
     if (data.tags !== undefined) updateData.tags = data.tags;
+    if (data.groupId !== undefined) updateData.group_id = data.groupId;
 
     const work = await WorkModel.update(id, userId, updateData);
 
@@ -136,8 +142,11 @@ router.patch('/:id', requireWorkAccess('edit'), async (req, res, next) => {
       return res.status(404).json({ error: 'Work not found' });
     }
 
-    // Emit SSE event for real-time updates
+    // Emit SSE event for real-time updates (work-level stream)
     await sseService.emitWorkUpdate(id, 'work:update', work);
+
+    // Emit SSE event to owner's dashboard (user-level stream)
+    await sseService.emitUserUpdate(userId, 'work:update', work);
 
     res.json(work);
   } catch (error) {
@@ -153,12 +162,12 @@ router.delete('/:id', requireWorkAccess('delete'), async (req, res, next) => {
     console.log(`Deleting work ${id} for user ${userId}`);
 
     // Get all timeline entries for this work to clean up images
-    const entries = await TimelineEntryModel.findByWorkId(id, userId);
+    const entries = await TimelineEntryModel.findByWorkIdWithAccess(id);
     console.log(`Found ${entries.length} timeline entries for work ${id}`);
 
     // Collect all image keys from all entries
     const imageKeys: string[] = [];
-    entries.forEach(entry => {
+    entries.forEach((entry: { id: number; image_urls?: string[] | null }) => {
       if (entry.image_urls && entry.image_urls.length > 0) {
         console.log(`Entry ${entry.id} has ${entry.image_urls.length} images:`, entry.image_urls);
         imageKeys.push(...entry.image_urls);
@@ -202,6 +211,9 @@ router.delete('/:id', requireWorkAccess('delete'), async (req, res, next) => {
     if (!deleted) {
       return res.status(404).json({ error: 'Work not found' });
     }
+
+    // Emit SSE event to owner's dashboard
+    await sseService.emitUserUpdate(userId, 'work:delete', { id });
 
     console.log(`Work ${id} deleted successfully`);
     res.status(204).send();

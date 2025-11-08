@@ -251,6 +251,19 @@ export class WorkAccessService {
   }
 
   /**
+   * Get all user IDs who have access to a work (for SSE broadcasting)
+   * Returns owner + all users the work is shared with
+   */
+  static async getUsersWithAccess(workId: number): Promise<number[]> {
+    const result = await query<{ user_id: number }>(
+      `SELECT user_id FROM work_access WHERE work_id = $1 AND can_view = true`,
+      [workId]
+    );
+
+    return result.rows.map(row => row.user_id);
+  }
+
+  /**
    * Get all works shared with a user
    */
   static async getSharedWithUser(userId: number): Promise<Array<{

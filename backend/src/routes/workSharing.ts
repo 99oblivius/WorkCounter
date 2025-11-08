@@ -3,8 +3,10 @@ import { requireAuth } from '../middleware/auth.js';
 import { requireWorkAccess, requireWorkOwnership } from '../middleware/authorization.js';
 import { requirePermission } from '../middleware/rbac.js';
 import { WorkAccessService } from '../services/workAccessService.js';
+import { WorkModel } from '../models/Work.js';
 import { AuditService } from '../services/auditService.js';
 import { sseService } from '../services/sseService.js';
+import { query } from '../config/database.js';
 import type { AuthenticatedRequest } from '../middleware/rbac.js';
 
 const router = Router();
@@ -91,9 +93,25 @@ router.post(
         userAgent: req.get('user-agent')
       });
 
-      // Emit SSE event for real-time updates
+      // Emit SSE event for work-level stream
       const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
       await sseService.emitWorkUpdate(workId, 'share:add', { shares });
+
+      // Notify the user who received the share (user-level stream)
+      const userResult = await query<{ id: number }>(
+        'SELECT id FROM users WHERE username = $1 OR email = $1',
+        [usernameOrEmail]
+      );
+      if (userResult.rows.length > 0) {
+        const sharedWithUserId = userResult.rows[0].id;
+        const work = await WorkModel.findByIdWithAccess(workId);
+        if (work) {
+          await sseService.emitUserUpdate(sharedWithUserId, 'work:shared', {
+            ...work,
+            permissionLevel: level,
+          });
+        }
+      }
 
       res.json({ success: true });
     } catch (error: any) {
@@ -144,6 +162,13 @@ router.delete(
         return res.status(403).json({ error: 'Only the work owner can unshare this work' });
       }
 
+      // Get user ID before unsharing (for SSE notification)
+      const userResult = await query<{ id: number }>(
+        'SELECT id FROM users WHERE username = $1 OR email = $1',
+        [identifier]
+      );
+      const unsharedUserId = userResult.rows.length > 0 ? userResult.rows[0].id : null;
+
       await WorkAccessService.unshareWork(workId, req.user!.userId, identifier);
 
       await AuditService.log({
@@ -158,9 +183,14 @@ router.delete(
         userAgent: req.get('user-agent')
       });
 
-      // Emit SSE event for real-time updates
+      // Emit SSE event for work-level stream
       const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
       await sseService.emitWorkUpdate(workId, 'share:remove', { shares });
+
+      // Notify the user who lost access (user-level stream)
+      if (unsharedUserId) {
+        await sseService.emitUserUpdate(unsharedUserId, 'work:unshared', { workId });
+      }
 
       res.json({ success: true });
     } catch (error: any) {
@@ -208,6 +238,9 @@ router.post(
         ipAddress: req.ip,
         userAgent: req.get('user-agent')
       });
+
+      // Notify user via SSE that they've left the work (user-level stream)
+      await sseService.emitUserUpdate(req.user!.userId, 'work:unshared', { workId });
 
       res.json({ success: true });
     } catch (error) {
