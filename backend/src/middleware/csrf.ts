@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { AuditService } from '../services/auditService.js';
 
 /**
  * CSRF Protection Middleware
@@ -10,7 +11,7 @@ import { Request, Response, NextFunction } from 'express';
  * - Browsers will not send custom headers on cross-origin form submissions
  * - Only JavaScript from same origin can add custom headers
  */
-export const csrfProtection = (req: Request, res: Response, next: NextFunction) => {
+export const csrfProtection = async (req: Request, res: Response, next: NextFunction) => {
   // Only check state-changing methods
   const statChangingMethods = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
@@ -27,7 +28,16 @@ export const csrfProtection = (req: Request, res: Response, next: NextFunction) 
   const requestedWith = req.get('X-Requested-With');
 
   if (requestedWith !== 'XMLHttpRequest') {
-    console.warn(`[SECURITY] CSRF attempt blocked: ${req.method} ${req.path} from ${req.ip}`);
+    await AuditService.log({
+      userId: (req as any).user?.userId,
+      username: (req as any).user?.username || 'anonymous',
+      action: 'csrf_blocked',
+      resourceType: 'security',
+      details: { method: req.method, path: req.path, reason: 'missing_csrf_header' },
+      ipAddress: req.ip || 'unknown',
+      userAgent: req.get('user-agent') || 'unknown',
+      status: 'failure'
+    });
     return res.status(403).json({
       error: 'Forbidden',
       message: 'Missing required security header'
@@ -41,11 +51,20 @@ export const csrfProtection = (req: Request, res: Response, next: NextFunction) 
  * Strict CSRF for critical operations (admin, sharing, deletion)
  * Requires both custom header AND valid origin
  */
-export const strictCsrfProtection = (req: Request, res: Response, next: NextFunction) => {
+export const strictCsrfProtection = async (req: Request, res: Response, next: NextFunction) => {
   // First check standard CSRF
   const requestedWith = req.get('X-Requested-With');
   if (requestedWith !== 'XMLHttpRequest') {
-    console.warn(`[SECURITY] Strict CSRF attempt blocked (no header): ${req.method} ${req.path} from ${req.ip}`);
+    await AuditService.log({
+      userId: (req as any).user?.userId,
+      username: (req as any).user?.username || 'anonymous',
+      action: 'strict_csrf_blocked',
+      resourceType: 'security',
+      details: { method: req.method, path: req.path, reason: 'missing_csrf_header' },
+      ipAddress: req.ip || 'unknown',
+      userAgent: req.get('user-agent') || 'unknown',
+      status: 'failure'
+    });
     return res.status(403).json({
       error: 'Forbidden',
       message: 'Missing required security header'
@@ -62,7 +81,16 @@ export const strictCsrfProtection = (req: Request, res: Response, next: NextFunc
   ];
 
   if (origin && !allowedOrigins.some(allowed => origin.startsWith(allowed as string))) {
-    console.warn(`[SECURITY] Strict CSRF attempt blocked (bad origin): ${req.method} ${req.path} from ${req.ip}, origin: ${origin}`);
+    await AuditService.log({
+      userId: (req as any).user?.userId,
+      username: (req as any).user?.username || 'anonymous',
+      action: 'strict_csrf_blocked',
+      resourceType: 'security',
+      details: { method: req.method, path: req.path, reason: 'invalid_origin', origin },
+      ipAddress: req.ip || 'unknown',
+      userAgent: req.get('user-agent') || 'unknown',
+      status: 'failure'
+    });
     return res.status(403).json({
       error: 'Forbidden',
       message: 'Invalid request origin'
