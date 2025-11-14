@@ -2,12 +2,11 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Search, Clock, LogOut, Settings, ChevronDown, User, Key, Users, FolderPlus, Edit2, Trash2, Pause } from 'lucide-react';
-import { workGroupsApi, sessionsApi, authApi } from '../services/api';
+import { worksApi, workGroupsApi, workSharingApi, sessionsApi, authApi } from '../services/api';
 import { useAuth } from '../hooks/useAuth';
 import { usePermissions } from '../hooks/usePermissions';
 import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useTimer, formatDuration } from '../hooks/useTimer';
-import { useUserStream } from '../hooks/useUserStream';
 import WorkForm from '../components/WorkForm';
 import CreateGroupModal from '../components/CreateGroupModal';
 import type { Work } from '../types';
@@ -38,14 +37,36 @@ export default function Dashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Use SSE stream for real-time works and running sessions updates
-  // SSE handles all data - no polling
-  useUserStream(true);
-
-  // Get data from React Query cache (populated by SSE only)
+  // Real-time updates via unified SSE stream (initialized in App.tsx)
+  // Dashboard data populated automatically via SSE snapshot and events
+  // Pattern: initialData prevents fetching while still subscribing to cache updates
   const queryClient = useQueryClient();
-  const ownedWorks = (queryClient.getQueryData(['works']) as any[]) || [];
-  const sharedWorks = (queryClient.getQueryData(['shared-works']) as any[]) || [];
+
+  // SSE populates these queries via snapshot event, but provide HTTP fallback
+  const { data: ownedWorks = [] } = useQuery<any[]>({
+    queryKey: ['works'],
+    queryFn: async () => {
+      const response = await worksApi.getAll();
+      return response.data;
+    },
+    initialData: [],
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: true,
+  });
+
+  const { data: sharedWorks = [] } = useQuery<any[]>({
+    queryKey: ['shared-works'],
+    queryFn: async () => {
+      return await workSharingApi.getSharedWithMe();
+    },
+    initialData: [],
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: true,
+  });
 
   // Fetch work groups
   const { data: groups = [] } = useQuery({
@@ -99,7 +120,12 @@ export default function Dashboard() {
   }, [works]);
 
   // Get running sessions from cache (populated by SSE only)
-  const allRunningSessions = (queryClient.getQueryData(['running-sessions-all']) as any[]) || [];
+  const { data: allRunningSessions = [] } = useQuery<any[]>({
+    queryKey: ['running-sessions-all'],
+    queryFn: () => Promise.reject('This query should never fetch - SSE provides data'),
+    initialData: [], // Start empty, SSE will populate
+    staleTime: Infinity,
+  });
 
   // PERFORMANCE: Build a map of running sessions by work_id for O(1) lookup
   const runningSessionsByWork = useMemo(() => {
@@ -120,7 +146,17 @@ export default function Dashboard() {
 
   const stopMutation = useMutation({
     mutationFn: (sessionId: number) => sessionsApi.stop(sessionId),
-    onSuccess: () => {
+    onSuccess: (_data, sessionId) => {
+      // Optimistically clear the running session immediately
+      queryClient.setQueryData(['sessions', 'running'], null);
+
+      // Remove from all running sessions list
+      queryClient.setQueryData(
+        ['running-sessions-all'],
+        (old: any[] = []) => old.filter(s => s.id !== sessionId)
+      );
+
+      // Invalidate to refetch
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
     onError: (error: any) => {

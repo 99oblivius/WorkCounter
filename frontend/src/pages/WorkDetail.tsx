@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Edit, Trash2, Play, Pause, Plus, Clock, DollarSign, Download, Share2, LogOut, Users } from 'lucide-react';
 import { worksApi, sessionsApi, timelineApi, authApi } from '../services/api';
-import { workSharingApi } from '../services/adminApi';
+import { workSharingApi } from '../services/api';
 import { useTimer, formatDuration, formatDurationShort } from '../hooks/useTimer';
 import { useUploadWarning } from '../hooks/useUploadWarning';
 import { useWorkPermissions } from '../hooks/useWorkPermissions';
-import { useWorkStream } from '../hooks/useWorkStream';
+import { useUnifiedStreamContext } from '../hooks/useUnifiedStream';
+import { useConfirm } from '../hooks/useConfirm';
 import WorkForm from '../components/WorkForm';
 import TimelineForm from '../components/TimelineForm';
 import VisualTimeline from '../components/VisualTimeline';
@@ -31,14 +32,33 @@ export default function WorkDetail() {
   const [editingSession, setEditingSession] = useState<TimeSession | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
 
+  // Non-blocking confirmation dialogs
+  const { confirm, ConfirmDialog } = useConfirm();
+
   // Fetch work permissions for current user
   const { permissions, isLoading: permissionsLoading } = useWorkPermissions(workId);
 
   // Warn user before leaving page if uploads are in progress
   useUploadWarning();
 
-  // SSE connection for real-time updates - replaces all polling
-  const { initialData } = useWorkStream(workId);
+  // Update unified SSE stream context to receive work-level events
+  const { isConnected, updateContext } = useUnifiedStreamContext();
+
+  // Set work context on mount, clear on unmount
+  // IMPORTANT: Only update context after SSE connection is established
+  useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
+    updateContext(workId);
+
+    return () => {
+      // Clear work context when leaving the page (back to dashboard context)
+      // With per-connection context, this is safe and only affects this tab
+      updateContext(null);
+    };
+  }, [workId, isConnected, updateContext]);
 
   // User query (not work-specific, so keep separate)
   const { data: user } = useQuery({
@@ -49,43 +69,57 @@ export default function WorkDetail() {
     },
   });
 
-  // Get data from React Query cache (populated by SSE)
+  // SSE populates these queries via work:snapshot event, but provide HTTP fallback
   const { data: work } = useQuery<any>({
     queryKey: ['works', workId],
-    enabled: false, // Don't fetch - data comes from SSE
+    queryFn: async () => {
+      const response = await worksApi.getById(workId);
+      return response.data;
+    },
+    initialData: undefined, // Start undefined, will be populated by SSE or HTTP
+    staleTime: Infinity, // SSE keeps data fresh
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const { data: sessions = [] } = useQuery<TimeSession[]>({
     queryKey: ['sessions', 'work', workId],
-    enabled: false, // Don't fetch - data comes from SSE
+    queryFn: async () => {
+      const response = await sessionsApi.getByWorkId(workId);
+      return response.data;
+    },
+    initialData: [], // Provide initial empty array before fetch completes
+    staleTime: Infinity, // SSE keeps data fresh
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const { data: timelineEntries = [] } = useQuery<TimelineEntry[]>({
     queryKey: ['timeline', 'work', workId],
-    enabled: false, // Don't fetch - data comes from SSE
+    queryFn: async () => {
+      const response = await timelineApi.getByWorkId(workId);
+      return response.data;
+    },
+    initialData: [], // Provide initial empty array before fetch completes
+    staleTime: Infinity, // SSE keeps data fresh
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   const { data: stats } = useQuery<{ totalDuration: number }>({
     queryKey: ['sessions', 'stats', workId],
-    enabled: false, // Don't fetch - data comes from SSE
-  });
-
-  const { data: sharesData, refetch: refetchShares } = useQuery<{ shares: any[] }>({
-    queryKey: ['work-shares', workId],
-    enabled: false, // Don't fetch - data comes from SSE
     queryFn: async () => {
-      return await workSharingApi.getWorkShares(workId);
+      const response = await sessionsApi.getStats(workId);
+      return response.data;
     },
+    // NOTE: Stats query DOES refetch on invalidation (SSE events trigger this)
+    // This is intentional - stats are calculated server-side from all sessions
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    // refetchOnMount: true by default - allows invalidateQueries to work
   });
 
-  const shares = sharesData?.shares || [];
-
-  // Refetch shares when opening the modal
-  useEffect(() => {
-    if (showShareModal && permissions.isOwner) {
-      refetchShares();
-    }
-  }, [showShareModal, permissions.isOwner, refetchShares]);
   const runningSession = sessions.find((s) => s.is_running);
 
   const elapsed = useTimer(runningSession || null);
@@ -116,15 +150,14 @@ export default function WorkDetail() {
   const startMutation = useMutation({
     mutationFn: () => sessionsApi.start(workId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      // No invalidation needed - SSE session:start event will update cache
     },
   });
 
   const stopMutation = useMutation({
     mutationFn: (sessionId: number) => sessionsApi.stop(sessionId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      queryClient.invalidateQueries({ queryKey: ['timeline'] });
+      // No invalidation needed - SSE session:stop event will update cache
     },
     onError: (error: any) => {
       if (error.response?.status === 403) {
@@ -154,7 +187,7 @@ export default function WorkDetail() {
     mutationFn: ({ id, data }: { id: number; data: { label?: string; activityType?: string | null; tags?: string[] | null } }) =>
       timelineApi.update(id, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['timeline'] });
+      // No invalidation needed - SSE timeline:update event will update cache
       setEditingEntry(null);
     },
   });
@@ -162,13 +195,12 @@ export default function WorkDetail() {
   const deleteTimelineMutation = useMutation({
     mutationFn: (id: number) => timelineApi.delete(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['timeline'] });
+      // No invalidation needed - SSE timeline:delete event will update cache
     },
     onError: (error: any) => {
       // Gracefully handle race conditions (entry already deleted)
       if (error.response?.status === 404) {
-        console.log('[Delete] Timeline entry already deleted, refreshing UI');
-        queryClient.invalidateQueries({ queryKey: ['timeline'] });
+        // SSE already removed it from cache, no need to invalidate
       } else {
         alert(error.response?.data?.error || 'Failed to delete timeline entry');
       }
@@ -178,15 +210,12 @@ export default function WorkDetail() {
   const deleteSessionMutation = useMutation({
     mutationFn: (sessionId: number) => sessionsApi.delete(sessionId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      queryClient.invalidateQueries({ queryKey: ['timeline'] });
+      // No invalidation needed - SSE session:delete event will update cache
     },
     onError: (error: any) => {
       // Gracefully handle race conditions (session already deleted)
       if (error.response?.status === 404) {
-        console.log('[Delete] Session already deleted, refreshing UI');
-        // Just refresh - SSE already removed it from cache
-        queryClient.invalidateQueries({ queryKey: ['sessions'] });
+        // SSE already removed it from cache, no need to invalidate
       } else {
         alert(error.response?.data?.error || 'Failed to delete session');
       }
@@ -203,14 +232,40 @@ export default function WorkDetail() {
     }
   };
 
-  const handleDelete = () => {
-    if (window.confirm('Are you sure you want to delete this work? This action cannot be undone.')) {
+  const handleDelete = async (event?: React.MouseEvent) => {
+    // Shift-click bypasses confirmation for power users
+    if (event?.shiftKey) {
+      deleteMutation.mutate();
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: 'Delete Work?',
+      message: 'Are you sure you want to delete this work? This action cannot be undone.',
+      confirmLabel: 'Delete Work',
+      variant: 'danger',
+    });
+
+    if (confirmed) {
       deleteMutation.mutate();
     }
   };
 
-  const handleLeave = () => {
-    if (window.confirm('Leave this shared work? You will no longer have access to it.')) {
+  const handleLeave = async (event?: React.MouseEvent) => {
+    // Shift-click bypasses confirmation for power users
+    if (event?.shiftKey) {
+      leaveMutation.mutate();
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: 'Leave Shared Work?',
+      message: 'You will no longer have access to this work.',
+      confirmLabel: 'Leave',
+      variant: 'warning',
+    });
+
+    if (confirmed) {
       leaveMutation.mutate();
     }
   };
@@ -225,12 +280,40 @@ export default function WorkDetail() {
     }
   };
 
-  const handleDeleteEntry = (entryId: number) => {
-    deleteTimelineMutation.mutate(entryId);
+  const handleConfirmDeleteEntry = async (entryId: number, event?: React.MouseEvent) => {
+    // Shift-click bypasses confirmation for power users
+    if (event?.shiftKey) {
+      deleteTimelineMutation.mutate(entryId);
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: 'Delete Note?',
+      message: 'This will permanently delete this timeline entry. This action cannot be undone.',
+      confirmLabel: 'Delete Note',
+      variant: 'danger',
+    });
+
+    if (confirmed) {
+      deleteTimelineMutation.mutate(entryId);
+    }
   };
 
-  const handleDeleteSession = (sessionId: number) => {
-    if (window.confirm('Delete this session and all its notes? This action cannot be undone.')) {
+  const handleDeleteSession = async (sessionId: number, event?: React.MouseEvent) => {
+    // Shift-click bypasses confirmation for power users
+    if (event?.shiftKey) {
+      deleteSessionMutation.mutate(sessionId);
+      return;
+    }
+
+    const confirmed = await confirm({
+      title: 'Delete Session?',
+      message: 'This will permanently delete this session and all its timeline entries. This action cannot be undone.',
+      confirmLabel: 'Delete Session',
+      variant: 'danger',
+    });
+
+    if (confirmed) {
       deleteSessionMutation.mutate(sessionId);
     }
   };
@@ -349,8 +432,9 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
   const totalHours = stats ? stats.totalDuration / (1000 * 60 * 60) : 0;
   const estimatedEarnings = work?.hourly_rate ? totalHours * work.hourly_rate : null;
 
-  // Loading state for permissions only (fast, doesn't block UI)
-  const isLoading = !initialData || permissionsLoading;
+  // Loading state: wait for work data and permissions
+  // Data comes from unified SSE stream (snapshot on context switch)
+  const isLoading = !work || permissionsLoading;
 
   return (
     <div className="h-screen bg-dark-bg flex flex-col overflow-hidden">
@@ -393,7 +477,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                   onClick={handleLeave}
                   disabled={leaveMutation.isPending}
                   className="btn btn-secondary flex items-center space-x-2"
-                  title="Remove yourself from this shared work"
+                  title="Remove yourself from this shared work (Shift+Click to skip confirmation)"
                 >
                   <LogOut size={16} />
                   <span>Leave Shared Work</span>
@@ -427,6 +511,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 <button
                   onClick={handleDelete}
                   className="btn btn-danger flex items-center space-x-2"
+                  title="Delete this work permanently (Shift+Click to skip confirmation)"
                 >
                   <Trash2 size={16} />
                   <span>Delete</span>
@@ -586,7 +671,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 scrollToSessionId={scrollToSessionId}
                 currentUserId={user?.userId}
                 onEditEntry={handleEditEntry}
-                onDeleteEntry={handleDeleteEntry}
+                onConfirmDeleteEntry={handleConfirmDeleteEntry}
                 canEditEntry={(entry) => permissions.canEditResource(entry.user_id)}
                 canDeleteEntry={(entry) => permissions.canDeleteResource(entry.user_id)}
               />
@@ -604,7 +689,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                 sessionOwnerName={runningSession.username}
                 currentUserId={user?.userId}
                 onSuccess={() => {
-                  queryClient.invalidateQueries({ queryKey: ['timeline'] });
+                  // No invalidation needed - SSE timeline:create event will update cache
                 }}
               />
             )}
@@ -621,7 +706,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
             )}
 
             {/* File Storage Section */}
-            {user && (
+            {user && !isLoading && (
               <FileStorageSection
                 workId={workId}
                 userId={user.userId}
@@ -711,10 +796,10 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleDeleteSession(session.id);
+                              handleDeleteSession(session.id, e);
                             }}
                             className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400"
-                            title="Delete session"
+                            title="Delete session (Shift+Click to skip confirmation)"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -737,7 +822,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
           onClose={() => setShowEditForm(false)}
           onSuccess={() => {
             setShowEditForm(false);
-            queryClient.invalidateQueries({ queryKey: ['works', workId] });
+            // No invalidation needed - SSE work:update event will update cache
           }}
         />
       )}
@@ -749,7 +834,7 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
           onClose={() => setShowTimelineForm(false)}
           onSuccess={() => {
             setShowTimelineForm(false);
-            queryClient.invalidateQueries({ queryKey: ['timeline'] });
+            // No invalidation needed - SSE timeline:create event will update cache
           }}
         />
       )}
@@ -772,10 +857,12 @@ ${work?.tags && work.tags.length > 0 ? `\n## Tags\n\n${work.tags.join(', ')}` : 
       {showShareModal && work && (
         <WorkSharingModal
           workId={workId}
-          shares={shares}
           onClose={() => setShowShareModal(false)}
         />
       )}
+
+      {/* Non-blocking confirmation dialog */}
+      {ConfirmDialog}
     </div>
   );
 }

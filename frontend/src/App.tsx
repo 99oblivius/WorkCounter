@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAuth } from './hooks/useAuth';
+import { UnifiedStreamProvider } from './hooks/useUnifiedStream';
+import ConnectionStatus from './components/ConnectionStatus';
 import Login from './pages/Login';
 import ChangePassword from './pages/ChangePassword';
 import UserSettings from './pages/UserSettings';
@@ -100,7 +102,10 @@ function AppRoutes() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppRoutes />
+      <UnifiedStreamProvider>
+        <ConnectionStatus />
+        <AppRoutes />
+      </UnifiedStreamProvider>
     </QueryClientProvider>
   );
 }
