@@ -1,4 +1,6 @@
 import { query } from '../config/database.js';
+import { QueryParams } from '../types/index.js';
+import { PaginatedResponse, createPaginatedResponse } from '../utils/pagination.js';
 
 export interface FileStorageRecord {
   id: number;
@@ -124,6 +126,24 @@ export class FileStorageModel {
   }
 
   /**
+   * Update file status with optional error message
+   */
+  static async updateStatus(
+    fileId: number,
+    status: 'uploading' | 'completed' | 'failed' | 'cancelled',
+    errorMessage?: string | null
+  ): Promise<void> {
+    await query(
+      `UPDATE file_storage
+       SET upload_status = $2,
+           error_message = $3,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [fileId, status, errorMessage || null]
+    );
+  }
+
+  /**
    * Get all completed files for a work
    */
   static async findByWorkId(workId: number, userId: number): Promise<FileStorageRecord[]> {
@@ -176,6 +196,65 @@ export class FileStorageModel {
       [workId]
     );
     return result.rows;
+  }
+
+  /**
+   * Get completed files for a work with pagination (when authorization is already checked)
+   */
+  static async findByWorkIdWithAccessPaginated(
+    workId: number,
+    options: { limit: number; cursor?: number }
+  ): Promise<PaginatedResponse<FileStorageRecord>> {
+    const conditions: string[] = ['work_id = $1', "upload_status = 'completed'"];
+    const params: QueryParams = [workId];
+    let paramCount = 2;
+
+    if (options.cursor) {
+      conditions.push(`id < $${paramCount++}`);
+      params.push(options.cursor);
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    params.push(options.limit + 1);
+
+    const sql = `SELECT * FROM file_storage
+                 WHERE ${conditions.join(' AND ')}
+                 ORDER BY id DESC
+                 LIMIT $${paramCount}`;
+
+    const result = await query<FileStorageRecord>(sql, params);
+    return createPaginatedResponse(result.rows, options.limit);
+  }
+
+  /**
+   * Get all files (including in-progress) for a work with pagination
+   * Includes username for file ownership display
+   */
+  static async findAllByWorkIdWithAccessPaginated(
+    workId: number,
+    options: { limit: number; cursor?: number }
+  ): Promise<PaginatedResponse<FileStorageRecord>> {
+    const conditions: string[] = ['fs.work_id = $1'];
+    const params: QueryParams = [workId];
+    let paramCount = 2;
+
+    if (options.cursor) {
+      conditions.push(`fs.id < $${paramCount++}`);
+      params.push(options.cursor);
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    params.push(options.limit + 1);
+
+    const sql = `SELECT fs.*, u.username
+                 FROM file_storage fs
+                 INNER JOIN users u ON fs.user_id = u.id
+                 WHERE ${conditions.join(' AND ')}
+                 ORDER BY fs.id DESC
+                 LIMIT $${paramCount}`;
+
+    const result = await query<FileStorageRecord>(sql, params);
+    return createPaginatedResponse(result.rows, options.limit);
   }
 
   /**

@@ -1,5 +1,5 @@
-import { query, getClient } from '../config/database.js';
-import { WorkGroup } from '../types/index.js';
+import { query, withTransaction } from '../config/database.js';
+import { WorkGroup, QueryParams } from '../types/index.js';
 
 export class WorkGroupModel {
   /**
@@ -53,7 +53,7 @@ export class WorkGroupModel {
     data: { title?: string; displayOrder?: number }
   ): Promise<WorkGroup | null> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: QueryParams = [];
     let paramCount = 1;
 
     if (data.title !== undefined) {
@@ -92,26 +92,16 @@ export class WorkGroupModel {
   }
 
   /**
-   * Batch update display orders for drag-and-drop reordering
+   * Batch update display orders for drag-and-drop reordering (atomically)
    */
   static async reorder(userId: number, groupOrders: { id: number; displayOrder: number }[]): Promise<void> {
-    const client = await getClient();
-    try {
-      await client.query('BEGIN');
-
+    return await withTransaction(async (client) => {
       for (const { id, displayOrder } of groupOrders) {
         await client.query(
           'UPDATE work_groups SET display_order = $1 WHERE id = $2 AND user_id = $3',
           [displayOrder, id, userId]
         );
       }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 }

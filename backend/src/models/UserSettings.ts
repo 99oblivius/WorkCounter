@@ -1,4 +1,4 @@
-import { query } from '../config/database.js';
+import { query, withTransaction } from '../config/database.js';
 
 interface UserSetting {
   id: number;
@@ -53,20 +53,20 @@ export class UserSettingsModel {
   }
 
   /**
-   * Set multiple settings for a user at once
+   * Set multiple settings for a user at once (atomically)
    */
   static async setMultiple(userId: number, settings: Record<string, string>): Promise<void> {
-    const client = await query('BEGIN', []);
-
-    try {
+    return await withTransaction(async (client) => {
       for (const [key, value] of Object.entries(settings)) {
-        await this.set(userId, key, value);
+        await client.query(
+          `INSERT INTO user_settings (user_id, setting_key, setting_value, updated_at)
+           VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+           ON CONFLICT (user_id, setting_key)
+           DO UPDATE SET setting_value = $3, updated_at = CURRENT_TIMESTAMP`,
+          [userId, key, value]
+        );
       }
-      await query('COMMIT', []);
-    } catch (error) {
-      await query('ROLLBACK', []);
-      throw error;
-    }
+    });
   }
 
   /**

@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
-import { TimeSession } from '../types/index.js';
+import { TimeSession, QueryParams } from '../types/index.js';
+import { PaginatedResponse, createPaginatedResponse } from '../utils/pagination.js';
 
 export class TimeSessionModel {
   static async findById(id: number, userId: number): Promise<TimeSession | null> {
@@ -44,6 +45,33 @@ export class TimeSessionModel {
     return result.rows;
   }
 
+  static async findByWorkIdWithAccessPaginated(
+    workId: number,
+    options: { limit: number; cursor?: number }
+  ): Promise<PaginatedResponse<TimeSession>> {
+    const conditions: string[] = ['ts.work_id = $1'];
+    const params: QueryParams = [workId];
+    let paramCount = 2;
+
+    if (options.cursor) {
+      conditions.push(`ts.id < $${paramCount++}`);
+      params.push(options.cursor);
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    params.push(options.limit + 1);
+
+    const sql = `SELECT ts.*, u.username
+                 FROM time_sessions ts
+                 INNER JOIN users u ON ts.user_id = u.id
+                 WHERE ${conditions.join(' AND ')}
+                 ORDER BY ts.id DESC
+                 LIMIT $${paramCount}`;
+
+    const result = await query<TimeSession>(sql, params);
+    return createPaginatedResponse(result.rows, options.limit);
+  }
+
   static async findRunningSession(userId: number): Promise<TimeSession | null> {
     const result = await query<TimeSession>(
       'SELECT * FROM time_sessions WHERE user_id = $1 AND is_running = true LIMIT 1',
@@ -65,14 +93,18 @@ export class TimeSessionModel {
    * Used for user-level SSE stream to show "Active" indicators on dashboard
    */
   static async findAllRunningForUser(userId: number): Promise<TimeSession[]> {
+    // FIXED: Include both owned works AND shared works
     const result = await query<TimeSession>(
       `SELECT DISTINCT ts.*, u.username
        FROM time_sessions ts
-       INNER JOIN work_access wa ON ts.work_id = wa.work_id
        INNER JOIN users u ON ts.user_id = u.id
+       INNER JOIN works w ON ts.work_id = w.id
+       LEFT JOIN work_access wa ON ts.work_id = wa.work_id AND wa.user_id = $1
        WHERE ts.is_running = true
-         AND wa.user_id = $1
-         AND wa.can_view = true
+         AND (
+           w.user_id = $1  -- Works owned by user
+           OR (wa.can_view = true)  -- Works shared with user
+         )
        ORDER BY ts.start_time DESC`,
       [userId]
     );
@@ -84,10 +116,16 @@ export class TimeSessionModel {
     userId: number;
     startTime: Date;
   }): Promise<TimeSession> {
+    // Include username for consistent SSE payload
     const result = await query<TimeSession>(
-      `INSERT INTO time_sessions (work_id, user_id, start_time, is_running)
-       VALUES ($1, $2, $3, true)
-       RETURNING *`,
+      `WITH inserted AS (
+         INSERT INTO time_sessions (work_id, user_id, start_time, is_running)
+         VALUES ($1, $2, $3, true)
+         RETURNING *
+       )
+       SELECT i.*, u.username
+       FROM inserted i
+       INNER JOIN users u ON i.user_id = u.id`,
       [data.workId, data.userId, data.startTime]
     );
     return result.rows[0];
@@ -108,13 +146,17 @@ export class TimeSessionModel {
 
   static async stopWithAccess(id: number, endTime: Date): Promise<TimeSession> {
     // Used when authorization is already checked by middleware
+    // Include username for consistent SSE payload
+    // Note: Can't use table alias in SET clause - PostgreSQL syntax requirement
     const result = await query<TimeSession>(
       `UPDATE time_sessions
        SET end_time = $1,
            duration_ms = EXTRACT(EPOCH FROM ($1 - start_time)) * 1000,
            is_running = false
-       WHERE id = $2
-       RETURNING *`,
+       FROM users u
+       WHERE time_sessions.id = $2
+         AND time_sessions.user_id = u.id
+       RETURNING time_sessions.*, u.username`,
       [endTime, id]
     );
     return result.rows[0];
@@ -126,7 +168,7 @@ export class TimeSessionModel {
     data: { startTime?: Date; endTime?: Date; title?: string | null; color?: string | null }
   ): Promise<TimeSession> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: QueryParams = [];
     let paramCount = 1;
 
     if (data.startTime !== undefined) {
@@ -171,13 +213,14 @@ export class TimeSessionModel {
   /**
    * Update session without user filtering (for work-level permission checks)
    * SECURITY: Only use after verifying work-level canEdit permission
+   * Returns session with username for consistent SSE payload
    */
   static async updateWithoutUserFilter(
     id: number,
     data: { startTime?: Date; endTime?: Date; title?: string | null; color?: string | null }
   ): Promise<TimeSession | null> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: QueryParams = [];
     let paramCount = 1;
 
     if (data.startTime !== undefined) {
@@ -200,17 +243,21 @@ export class TimeSessionModel {
     }
 
     if (fields.length === 0) {
-      // No fields to update, return existing session
+      // No fields to update, return existing session with username
       return await this.findByIdWithAccess(id);
     }
 
     values.push(id);
 
+    // Join with users table to include username (consistent with findByWorkIdWithAccess)
+    // Note: Can't use table alias in SET clause - PostgreSQL syntax requirement
     const result = await query<TimeSession>(
       `UPDATE time_sessions
        SET ${fields.join(', ')}
-       WHERE id = $${paramCount}
-       RETURNING *`,
+       FROM users u
+       WHERE time_sessions.id = $${paramCount}
+         AND time_sessions.user_id = u.id
+       RETURNING time_sessions.*, u.username`,
       values
     );
     return result.rows[0] || null;

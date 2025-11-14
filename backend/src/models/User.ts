@@ -1,5 +1,5 @@
 import { query } from '../config/database.js';
-import { User } from '../types/index.js';
+import { User, QueryParams } from '../types/index.js';
 import { PasswordService } from '../services/passwordService.js';
 
 export class UserModel {
@@ -39,7 +39,7 @@ export class UserModel {
 
   static async update(id: number, data: Partial<Pick<User, 'email' | 'username'>>): Promise<User> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: QueryParams = [];
     let paramCount = 1;
 
     if (data.email !== undefined) {

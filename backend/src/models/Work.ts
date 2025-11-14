@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
-import { Work } from '../types/index.js';
+import { Work, QueryParams } from '../types/index.js';
+import { PaginatedResponse, createPaginatedResponse } from '../utils/pagination.js';
 
 export class WorkModel {
   static async findById(id: number, userId: number): Promise<Work | null> {
@@ -21,7 +22,7 @@ export class WorkModel {
 
   static async findByUserId(userId: number, status?: string): Promise<Work[]> {
     let sql = 'SELECT * FROM works WHERE user_id = $1';
-    const params: any[] = [userId];
+    const params: QueryParams = [userId];
 
     if (status) {
       sql += ' AND status = $2';
@@ -32,6 +33,37 @@ export class WorkModel {
 
     const result = await query<Work>(sql, params);
     return result.rows;
+  }
+
+  static async findByUserIdPaginated(
+    userId: number,
+    options: { limit: number; cursor?: number; status?: string }
+  ): Promise<PaginatedResponse<Work>> {
+    const { limit, cursor, status } = options;
+    const conditions: string[] = ['user_id = $1'];
+    const params: QueryParams = [userId];
+    let paramCount = 2;
+
+    if (status) {
+      conditions.push(`status = $${paramCount++}`);
+      params.push(status);
+    }
+
+    if (cursor) {
+      conditions.push(`id < $${paramCount++}`);
+      params.push(cursor);
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    params.push(limit + 1);
+
+    const sql = `SELECT * FROM works
+                 WHERE ${conditions.join(' AND ')}
+                 ORDER BY id DESC
+                 LIMIT $${paramCount}`;
+
+    const result = await query<Work>(sql, params);
+    return createPaginatedResponse(result.rows, limit);
   }
 
   static async create(data: {
@@ -66,7 +98,7 @@ export class WorkModel {
     data: Partial<Omit<Work, 'id' | 'user_id' | 'created_at' | 'updated_at'>>
   ): Promise<Work> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: QueryParams = [];
     let paramCount = 1;
 
     if (data.title !== undefined) {
@@ -151,5 +183,53 @@ export class WorkModel {
       [userId, `%${escapedForLike}%`, sanitizedTerm]
     );
     return result.rows;
+  }
+
+  static async searchPaginated(
+    userId: number,
+    searchTerm: string,
+    options: { limit: number; cursor?: number }
+  ): Promise<PaginatedResponse<Work>> {
+    // SECURITY: Validate and sanitize search input
+    if (!searchTerm || typeof searchTerm !== 'string') {
+      return createPaginatedResponse([], options.limit);
+    }
+
+    const sanitizedTerm = searchTerm.trim().substring(0, 200);
+    if (sanitizedTerm.length === 0) {
+      return createPaginatedResponse([], options.limit);
+    }
+
+    // SECURITY: Escape LIKE wildcards
+    const escapedForLike = sanitizedTerm
+      .replace(/\\/g, '\\\\')
+      .replace(/%/g, '\\%')
+      .replace(/_/g, '\\_');
+
+    const conditions: string[] = ['user_id = $1'];
+    const params: QueryParams = [userId, `%${escapedForLike}%`, sanitizedTerm];
+    let paramCount = 4;
+
+    if (options.cursor) {
+      conditions.push(`id < $${paramCount++}`);
+      params.push(options.cursor);
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    params.push(options.limit + 1);
+
+    const sql = `SELECT * FROM works
+                 WHERE ${conditions.join(' AND ')}
+                 AND (
+                   title ILIKE $2 ESCAPE '\\'
+                   OR description ILIKE $2 ESCAPE '\\'
+                   OR client_name ILIKE $2 ESCAPE '\\'
+                   OR $3 = ANY(tags)
+                 )
+                 ORDER BY id DESC
+                 LIMIT $${paramCount}`;
+
+    const result = await query<Work>(sql, params);
+    return createPaginatedResponse(result.rows, options.limit);
   }
 }

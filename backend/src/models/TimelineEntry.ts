@@ -1,5 +1,6 @@
 import { query } from '../config/database.js';
-import { TimelineEntry } from '../types/index.js';
+import { TimelineEntry, QueryParams } from '../types/index.js';
+import { PaginatedResponse, createPaginatedResponse } from '../utils/pagination.js';
 
 export class TimelineEntryModel {
   static async findById(id: number, userId: number): Promise<TimelineEntry | null> {
@@ -42,6 +43,56 @@ export class TimelineEntryModel {
     return result.rows;
   }
 
+  static async findByWorkIdWithAccessPaginated(
+    workId: number,
+    options: { limit: number; cursor?: number }
+  ): Promise<PaginatedResponse<TimelineEntry>> {
+    const conditions: string[] = ['work_id = $1'];
+    const params: QueryParams = [workId];
+    let paramCount = 2;
+
+    if (options.cursor) {
+      conditions.push(`id < $${paramCount++}`);
+      params.push(options.cursor);
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    params.push(options.limit + 1);
+
+    const sql = `SELECT * FROM timeline_entries
+                 WHERE ${conditions.join(' AND ')}
+                 ORDER BY id DESC
+                 LIMIT $${paramCount}`;
+
+    const result = await query<TimelineEntry>(sql, params);
+    return createPaginatedResponse(result.rows, options.limit);
+  }
+
+  static async findBySessionIdWithAccessPaginated(
+    sessionId: number,
+    options: { limit: number; cursor?: number }
+  ): Promise<PaginatedResponse<TimelineEntry>> {
+    const conditions: string[] = ['time_session_id = $1'];
+    const params: QueryParams = [sessionId];
+    let paramCount = 2;
+
+    if (options.cursor) {
+      conditions.push(`id > $${paramCount++}`); // Note: ASC order so > instead of <
+      params.push(options.cursor);
+    }
+
+    // Fetch limit + 1 to determine if there are more results
+    params.push(options.limit + 1);
+
+    const sql = `SELECT * FROM timeline_entries
+                 WHERE ${conditions.join(' AND ')}
+                 ORDER BY id ASC
+                 LIMIT $${paramCount}`;
+
+    const result = await query<TimelineEntry>(sql, params);
+    return createPaginatedResponse(result.rows, options.limit);
+  }
+
   static async create(data: {
     timeSessionId: number;
     workId: number;
@@ -78,7 +129,7 @@ export class TimelineEntryModel {
     data: Partial<Pick<TimelineEntry, 'timestamp' | 'label'>> & { activity_type?: string | null; image_urls?: string[] | null }
   ): Promise<TimelineEntry | null> {
     const fields: string[] = [];
-    const values: any[] = [];
+    const values: QueryParams = [];
     let paramCount = 1;
 
     if (data.timestamp !== undefined) {
