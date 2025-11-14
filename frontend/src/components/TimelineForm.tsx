@@ -110,7 +110,7 @@ export default function TimelineForm({ workId, sessionId, onClose, onSuccess }: 
               required
               className="input resize-none"
               rows={3}
-              placeholder="What are you working on?"
+              placeholder="What did you work on?"
             />
           </div>
 

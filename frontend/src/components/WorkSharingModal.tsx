@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X, UserPlus, Trash2, Users, Shield } from 'lucide-react';
-import { workSharingApi } from '../services/adminApi';
+import { workSharingApi } from '../services/api';
 import type { WorkShare } from '../types/admin';
 import type { WorkPermissionLevel } from '../types/permissions';
 import { PERMISSION_LEVELS } from '../types/permissions';
@@ -9,40 +9,77 @@ import WorkPermissionModal from './WorkPermissionModal';
 
 interface WorkSharingModalProps {
   workId: number;
-  shares: WorkShare[];
   onClose: () => void;
 }
 
-export default function WorkSharingModal({ workId, shares, onClose }: WorkSharingModalProps) {
+export default function WorkSharingModal({ workId, onClose }: WorkSharingModalProps) {
+  const queryClient = useQueryClient();
   const [usernameOrEmail, setUsernameOrEmail] = useState('');
   const [permissionLevel, setPermissionLevel] = useState<WorkPermissionLevel>('viewer');
-  const [currentShares, setCurrentShares] = useState<WorkShare[]>(shares);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [editingUser, setEditingUser] = useState<string | null>(null);
 
-  // Sync local state when shares prop changes
-  useEffect(() => {
-    setCurrentShares(shares);
-  }, [shares]);
+  const { data: sharesData } = useQuery<{ shares: WorkShare[] }>({
+    queryKey: ['work-shares', workId],
+    queryFn: async () => {
+      const response = await workSharingApi.getWorkShares(workId);
+      return response;
+    },
+    staleTime: 0,
+  });
+
+  const shares = sharesData?.shares || [];
+
+  const currentEditingShare = editingUser
+    ? shares.find(s => s.username === editingUser)
+    : null;
+  const currentPermissionLevel = currentEditingShare?.permissionLevel || permissionLevel;
 
   const shareMutation = useMutation({
     mutationFn: (level?: WorkPermissionLevel) =>
       workSharingApi.shareWork(workId, editingUser || usernameOrEmail, level || permissionLevel),
+    onMutate: async (level) => {
+      if (editingUser && level) {
+        await queryClient.cancelQueries({ queryKey: ['work-shares', workId] });
+
+        const previousShares = queryClient.getQueryData(['work-shares', workId]);
+
+        queryClient.setQueryData(['work-shares', workId], (old: { shares: WorkShare[] } | undefined) => {
+          if (!old) return old;
+          return {
+            ...old,
+            shares: old.shares.map(share =>
+              share.username === editingUser
+                ? { ...share, permissionLevel: level }
+                : share
+            )
+          };
+        });
+
+        return { previousShares };
+      }
+    },
     onSuccess: () => {
-      // SSE already updates cache via share:add event in useWorkStream
+      // SSE already updates cache via share:add/share:update event
+      // But we also need to invalidate work permissions to ensure immediate UI updates
+      queryClient.invalidateQueries({ queryKey: ['work-permissions', workId] });
+
       setUsernameOrEmail('');
       setPermissionLevel('viewer');
       setEditingUser(null);
       setShowPermissionModal(false);
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousShares) {
+        queryClient.setQueryData(['work-shares', workId], context.previousShares);
+      }
     },
   });
 
   const unshareMutation = useMutation({
     mutationFn: (identifier: string) =>
       workSharingApi.unshareWork(workId, identifier),
-    onSuccess: () => {
-      // SSE already updates cache via share:remove event in useWorkStream
-    },
+    onSuccess: () => {},
   });
 
   return (
@@ -101,16 +138,16 @@ export default function WorkSharingModal({ workId, shares, onClose }: WorkSharin
         {/* Shared users list */}
         <div>
           <h3 className="text-sm font-medium text-gray-300 mb-3">
-            Shared With ({currentShares.length})
+            Shared With ({shares.length})
           </h3>
 
-          {currentShares.length === 0 ? (
+          {shares.length === 0 ? (
             <p className="text-gray-500 text-sm text-center py-8">
               This work is not shared with anyone yet
             </p>
           ) : (
             <div className="space-y-2">
-              {currentShares.map((share) => (
+              {shares.map((share) => (
                 <div
                   key={share.username}
                   className="flex items-center justify-between p-3 bg-dark-bg border border-dark-border rounded-lg"
@@ -165,9 +202,9 @@ export default function WorkSharingModal({ workId, shares, onClose }: WorkSharin
       {showPermissionModal && editingUser && (
         <WorkPermissionModal
           username={editingUser}
-          currentLevel={permissionLevel}
+          currentLevel={currentPermissionLevel}
           onSelect={(level) => {
-            setPermissionLevel(level);
+            // Mutation will optimistically update cache for immediate feedback
             shareMutation.mutate(level);
           }}
           onClose={() => {

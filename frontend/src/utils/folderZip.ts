@@ -91,7 +91,6 @@ export async function zipFolder(
 
   const totalFiles = files.length;
 
-  // Step 1: Read all files into memory
   const fileDataArray: Array<{ path: string; data: Uint8Array }> = [];
 
   for (let i = 0; i < files.length; i++) {
@@ -122,7 +121,7 @@ export async function zipFolder(
     });
   }
 
-  // Step 2: Use Web Worker to compress files off the main thread
+  // Use Web Worker to compress files off the main thread to avoid blocking UI
   const zipped = await new Promise<Uint8Array>((resolve, reject) => {
     const worker = new Worker(
       new URL('../workers/zipWorker.ts', import.meta.url),
@@ -133,8 +132,7 @@ export async function zipFolder(
       const message = e.data;
 
       if (message.type === 'progress') {
-        // Worker is building zip structure, we can ignore this
-        // since we already showed reading progress
+        // Ignore progress from worker since we already showed file reading progress
       } else if (message.type === 'success') {
         worker.terminate();
         resolve(message.data);
@@ -149,25 +147,21 @@ export async function zipFolder(
       reject(new Error(`Worker error: ${error.message}`));
     };
 
-    // Prepare data to transfer to worker
     const workerInput: ZipWorkerInput = {
       files: fileDataArray,
       level: 6,
     };
 
-    // Collect all ArrayBuffers to transfer (zero-copy operation)
+    // Transfer ArrayBuffer ownership to worker (zero-copy operation)
     const transferables: Transferable[] = fileDataArray
       .map(f => f.data.buffer)
       .filter((buf): buf is ArrayBuffer => buf instanceof ArrayBuffer);
 
-    // Transfer ownership of buffers to worker (no memory copy!)
     worker.postMessage(workerInput, transferables);
   });
 
   const sanitizedName = sanitizeFilename(folderName);
   const zipFileName = `${sanitizedName}.zip`;
-
-  // Convert to File object - create a proper ArrayBuffer from Uint8Array
   const buffer = new ArrayBuffer(zipped.byteLength);
   const view = new Uint8Array(buffer);
   view.set(zipped);

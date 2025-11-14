@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation } from '@tanstack/react-query';
 import { X, Clock } from 'lucide-react';
 import { sessionsApi } from '../services/api';
 import type { TimeSession } from '../types';
@@ -23,7 +23,6 @@ const colors = [
 export default function EditSessionModal({ session, onClose }: EditSessionModalProps) {
   const [title, setTitle] = useState(session.title || '');
   const [selectedColor, setSelectedColor] = useState<string | null>(session.color || null);
-  const queryClient = useQueryClient();
 
   const updateMutation = useMutation({
     mutationFn: async () => {
@@ -33,8 +32,7 @@ export default function EditSessionModal({ session, onClose }: EditSessionModalP
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] });
-      queryClient.invalidateQueries({ queryKey: ['timeline'] });
+      // No query invalidation needed - SSE session:update event will update cache
       onClose();
     },
   });

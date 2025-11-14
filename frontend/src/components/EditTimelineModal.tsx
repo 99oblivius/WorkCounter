@@ -45,7 +45,6 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    // Validate files
     const validFiles = files.filter(file => {
       const validation = validateImageFile(file);
       if (!validation.valid) {
@@ -61,34 +60,29 @@ export default function EditTimelineModal({ entry, onClose, onSave }: EditTimeli
     }
 
     uploadMutation.mutate(validFiles);
-    e.target.value = ''; // Reset input
+    e.target.value = '';
   };
 
-  // Mark image for deletion (staged until save)
   const handleRemoveImage = (imageKey: string) => {
     setImageKeys(prev => prev.filter(key => key !== imageKey));
     setImagesToDelete(prev => [...prev, imageKey]);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter (without Shift) to submit
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e as any);
     }
-    // Shift+Enter will insert newline naturally
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Require at least label or images remaining (can't have completely empty entry)
     if (!label.trim() && imageKeys.length === 0) {
       alert('Timeline entry must have either text or images. To remove this entry completely, use the delete button.');
       return;
     }
 
-    // Delete removed images
     if (imagesToDelete.length > 0) {
       try {
         await Promise.all(

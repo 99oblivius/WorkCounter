@@ -13,6 +13,7 @@ interface VisualTimelineProps {
   currentUserId?: number; // For showing session ownership
   onEditEntry?: (entry: TimelineEntry) => void;
   onDeleteEntry?: (entryId: number) => void;
+  onConfirmDeleteEntry?: (entryId: number, event?: React.MouseEvent) => Promise<void>; // Async confirm + delete
   canEditEntry?: (entry: TimelineEntry) => boolean;
   canDeleteEntry?: (entry: TimelineEntry) => boolean;
 }
@@ -24,12 +25,11 @@ type TimelineItem =
   | { type: 'now'; timestamp: number };
 
 
-export default function VisualTimeline({ entries, sessions, runningSession, scrollToSessionId, currentUserId, onEditEntry, onDeleteEntry, canEditEntry, canDeleteEntry }: VisualTimelineProps) {
+export default function VisualTimeline({ entries, sessions, runningSession, scrollToSessionId, currentUserId, onEditEntry, onDeleteEntry, onConfirmDeleteEntry, canEditEntry, canDeleteEntry }: VisualTimelineProps) {
   const [currentTime, setCurrentTime] = useState(Date.now());
   const timelineRef = useRef<HTMLDivElement>(null);
   const sessionRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // Update current time every second when there's a running session
   useEffect(() => {
     if (!runningSession) return;
 
@@ -40,7 +40,6 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
     return () => clearInterval(interval);
   }, [runningSession]);
 
-  // Scroll to specific session when clicked (scroll to session end at top)
   useEffect(() => {
     if (scrollToSessionId && sessionRefs.current.has(scrollToSessionId)) {
       const element = sessionRefs.current.get(scrollToSessionId);
@@ -61,20 +60,17 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
   const buildUnifiedTimeline = (): TimelineItem[] => {
     const items: TimelineItem[] = [];
 
-    // Sort sessions chronologically (oldest first)
     const sortedSessions = [...sessions].sort(
       (a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
     );
 
     sortedSessions.forEach((session) => {
-      // Add session start marker
       items.push({
         type: 'session-start',
         session,
         timestamp: new Date(session.start_time).getTime(),
       });
 
-      // Add entries for this session
       const sessionEntries = entries
         .filter((entry) => entry.time_session_id === session.id)
         .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
@@ -87,7 +83,6 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
         });
       });
 
-      // Add session end marker if session is complete
       if (session.end_time) {
         items.push({
           type: 'session-end',
@@ -97,7 +92,6 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
       }
     });
 
-    // Add "NOW" marker if there's a running session
     if (runningSession) {
       items.push({
         type: 'now',
@@ -109,8 +103,6 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
   };
 
   const timelineItems = buildUnifiedTimeline();
-
-  // Reverse chronology - latest at top
   const reversedItems = [...timelineItems].reverse();
 
   return (
@@ -137,14 +129,9 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
             return null;
           };
 
-          // Get next item (chronologically earlier)
           const nextItem = index < reversedItems.length - 1 ? reversedItems[index + 1] : null;
-
-          // Determine session context
           const currentSessionId = getSessionId(item);
           const nextSessionId = nextItem ? getSessionId(nextItem) : null;
-
-          // Should we draw a line down to the next item (chronologically earlier)?
           const shouldDrawLineDown = currentSessionId && nextSessionId && currentSessionId === nextSessionId;
 
           if (item.type === 'session-start') {
@@ -217,15 +204,18 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                             <Edit2 size={14} />
                           </button>
                         )}
-                        {onDeleteEntry && canDeleteEntry && canDeleteEntry(item.entry) && (
+                        {(onConfirmDeleteEntry || onDeleteEntry) && canDeleteEntry && canDeleteEntry(item.entry) && (
                           <button
-                            onClick={() => {
-                              if (window.confirm('Delete this note?')) {
+                            onClick={(e) => {
+                              // Use async confirm if available, otherwise fallback to sync
+                              if (onConfirmDeleteEntry) {
+                                onConfirmDeleteEntry(item.entry.id, e);
+                              } else if (onDeleteEntry && window.confirm('Delete this note?')) {
                                 onDeleteEntry(item.entry.id);
                               }
                             }}
                             className="p-1 bg-dark-surface hover:bg-dark-hover rounded text-gray-400 hover:text-red-400 border border-dark-border"
-                            title="Delete note"
+                            title="Delete note (Shift+Click to skip confirmation)"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -250,7 +240,6 @@ export default function VisualTimeline({ entries, sessions, runningSession, scro
                       {item.entry.image_urls && item.entry.image_urls.length > 0 && (
                         <ImageGallery
                           imageKeys={item.entry.image_urls}
-                          // No entryId = no delete buttons (delete via edit modal only)
                         />
                       )}
                     </div>

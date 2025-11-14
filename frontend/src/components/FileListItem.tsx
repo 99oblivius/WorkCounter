@@ -2,6 +2,7 @@ import { Download, Trash2, X, Loader2, AlertCircle, Users } from 'lucide-react';
 import FileTypeIcon from './FileIcon';
 import { formatBytes, formatSpeed } from '../utils/format';
 import type { FileStorageRecord } from '../types';
+import type { DownloadItem } from '../stores/downloadQueueStore';
 
 interface FileListItemProps {
   file: FileStorageRecord;
@@ -9,7 +10,9 @@ interface FileListItemProps {
   uploadSpeed?: number; // bytes per second (only for uploading files)
   onDownload?: (fileId: number) => void;
   onDelete?: (fileId: number) => void;
+  onConfirmDelete?: (fileId: number, event?: React.MouseEvent) => Promise<void>; // Async confirm + delete
   onCancel?: (fileId: number) => void;
+  downloadState?: DownloadItem; // Current download state for this file
 }
 
 /**
@@ -22,20 +25,30 @@ export default function FileListItem({
   uploadSpeed = 0,
   onDownload,
   onDelete,
+  onConfirmDelete,
   onCancel,
+  downloadState,
 }: FileListItemProps) {
   const isUploading = file.upload_status === 'uploading';
   const isCompleted = file.upload_status === 'completed';
   const isFailed = file.upload_status === 'failed';
 
+  // Download states
+  const isDownloading = downloadState?.status === 'downloading';
+  const downloadFailed = downloadState?.status === 'failed';
+  const downloadCompleted = downloadState?.status === 'completed';
+
   const handleDownload = () => {
-    if (isCompleted && onDownload) {
+    if (isCompleted && onDownload && !isDownloading) {
       onDownload(file.id);
     }
   };
 
-  const handleDelete = () => {
-    if (onDelete && window.confirm(`Delete "${file.display_name}"?`)) {
+  const handleDelete = (e: React.MouseEvent) => {
+    // Use async confirm if available, otherwise fallback to sync
+    if (onConfirmDelete) {
+      onConfirmDelete(file.id, e);
+    } else if (onDelete && window.confirm(`Delete "${file.display_name}"?`)) {
       onDelete(file.id);
     }
   };
@@ -46,9 +59,39 @@ export default function FileListItem({
     }
   };
 
+  // Format download speed for display
+  const formatDownloadSpeed = (bytesPerSecond: number): string => {
+    if (bytesPerSecond === 0) return '';
+    if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`;
+    if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+    return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`;
+  };
+
   return (
-    <div className="w-full bg-dark-bg border border-dark-border hover:border-gray-600 rounded p-2 text-xs transition-colors group relative">
-      <div className="flex items-center space-x-3">
+    <div className="w-full bg-dark-bg border border-dark-border hover:border-gray-600 rounded p-2 text-xs transition-colors group relative overflow-hidden">
+      {/* Download progress overlay - fills from left to right */}
+      {isDownloading && downloadState && (
+        <div
+          className="absolute inset-0 bg-blue-500 bg-opacity-10 transition-all duration-300 pointer-events-none"
+          style={{ width: `${downloadState.progress}%` }}
+        />
+      )}
+
+      {/* Completed flash - brief green overlay */}
+      {downloadCompleted && (
+        <div
+          className="absolute inset-0 bg-green-500 bg-opacity-20 pointer-events-none animate-fade-out"
+        />
+      )}
+
+      {/* Failed flash - brief red overlay */}
+      {downloadFailed && (
+        <div
+          className="absolute inset-0 bg-red-500 bg-opacity-20 pointer-events-none animate-fade-out"
+        />
+      )}
+
+      <div className="flex items-center space-x-3 relative z-10">
         {/* File Icon */}
         <FileTypeIcon
           filename={file.display_name}
@@ -81,7 +124,7 @@ export default function FileListItem({
                 </div>
               )}
 
-              {/* Action Buttons (only show on completed or failed) */}
+              {/* Action Buttons (only show on completed files) */}
               {isCompleted && (
                 <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
                   {onDownload && (
@@ -93,11 +136,11 @@ export default function FileListItem({
                       <Download size={14} />
                     </button>
                   )}
-                  {onDelete && (
+                  {(onConfirmDelete || onDelete) && (
                     <button
                       onClick={handleDelete}
                       className="p-1 hover:bg-dark-hover rounded text-gray-400 hover:text-red-400"
-                      title="Delete"
+                      title="Delete file (Shift+Click to skip confirmation)"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -118,8 +161,26 @@ export default function FileListItem({
             </div>
           </div>
 
-          {/* File Size, Upload Date, and Username (for completed files) */}
-          {isCompleted && (
+          {/* Download progress info (when downloading) */}
+          {isDownloading && downloadState && (
+            <div className="mt-0.5 text-gray-400">
+              {formatBytes(downloadState.downloadedBytes)} of {formatBytes(downloadState.fileSize)}
+              {downloadState.downloadSpeed > 0 && (
+                <span> • {formatDownloadSpeed(downloadState.downloadSpeed)}</span>
+              )}
+              <span className="text-blue-400 ml-1">• {downloadState.progress}%</span>
+            </div>
+          )}
+
+          {/* Download error (when failed) */}
+          {downloadFailed && downloadState && (
+            <div className="mt-0.5 text-red-400">
+              {downloadState.error || 'Download failed'}
+            </div>
+          )}
+
+          {/* File Size, Upload Date, and Username (for completed files, when not downloading or failed) */}
+          {isCompleted && !isDownloading && !downloadFailed && (
             <div className="mt-0.5 flex items-center gap-2 flex-wrap">
               <p className="text-gray-500">
                 {formatBytes(file.file_size)}

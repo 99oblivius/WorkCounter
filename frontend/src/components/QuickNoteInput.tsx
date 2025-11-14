@@ -27,12 +27,10 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check user permissions for attachment uploads
   const { can, limits } = useUserPermissions();
 
   const mutation = useMutation({
     mutationFn: async (data: { label?: string; activityType?: string; images: File[] }) => {
-      // Create entry first
       const entry = await timelineApi.create({
         timeSessionId: sessionId,
         workId,
@@ -41,9 +39,7 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
         activityType: data.activityType || undefined,
       });
 
-      // Upload images if any
       if (data.images.length > 0) {
-        // Update pending images status
         setPendingImages(prev => prev.map(img => ({ ...img, status: 'uploading' as const, progress: 0 })));
 
         await timelineApi.uploadImages(entry.data.id, data.images, (progress) => {
@@ -61,7 +57,6 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
       inputRef.current?.focus();
     },
     onError: () => {
-      // Reset pending images status on error
       setPendingImages(prev => prev.map(img => ({
         ...img,
         status: 'error' as const,
@@ -71,13 +66,11 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
   });
 
   const addPendingImages = (files: File[]) => {
-    // Check permission first
     if (!can.uploadAttachments) {
-      return; // Silently ignore if no permission
+      return;
     }
 
     const validFiles = files.filter(file => {
-      // Validate with user-specific limits
       const validation = validateImageFile(file, limits.maxImageSize);
       if (!validation.valid) {
         alert(validation.error);
@@ -123,7 +116,6 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
   };
 
   const handlePaste = (e: ClipboardEvent) => {
-    // Only enable paste if user has attachment permission
     if (!can.uploadAttachments) {
       return;
     }
@@ -143,7 +135,6 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Require at least note or images
     if (!note.trim() && pendingImages.length === 0) return;
 
     mutation.mutate({
@@ -154,33 +145,25 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Enter (without Shift) to submit
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e as any);
-    }
-    // Ctrl/Cmd + Enter to add activity type quickly
-    else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       setShowActivityPicker(!showActivityPicker);
     }
-    // Shift+Enter will insert newline naturally
   };
 
-  // Auto-focus on mount and add paste listener
   useEffect(() => {
     inputRef.current?.focus();
 
-    // Add paste listener
     window.addEventListener('paste', handlePaste);
     return () => {
       window.removeEventListener('paste', handlePaste);
-      // Cleanup blob URLs
       pendingImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
     };
   }, [pendingImages]);
 
-  // Check if this is another user's session
   const isOthersSession = currentUserId && sessionOwnerId && currentUserId !== sessionOwnerId;
 
   return (
@@ -219,7 +202,7 @@ export default function QuickNoteInput({ workId, sessionId, sessionOwnerId, sess
             value={note}
             onChange={(e) => setNote(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="What are you working on right now?"
+            placeholder="What did you work on?"
             className="input flex-1 resize-none"
             rows={1}
             disabled={mutation.isPending}

@@ -5,8 +5,12 @@
 /* CSS Custom Properties for theming */
 :root {
   --accent-color: #3b82f6;
-  --accent-color-light: #93c5fd; /* Pastel/lighter version */
-  --accent-color-hover: #2563eb;
+
+  /* Auto-derive lighter variant (pastel) - increases lightness by ~20% */
+  --accent-color-light: oklch(from var(--accent-color) calc(l + 0.2) c h);
+
+  /* Auto-derive hover variant - if dark make lighter, if light make darker */
+  --accent-color-hover: oklch(from var(--accent-color) calc(l - 0.1) calc(c * 1.1) h);
 }
 
 /* Dark theme (default) */
@@ -215,6 +219,36 @@
 
   .animate-pulse {
     animation: skeleton-fade 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /* Slide-up animation for notifications */
+  @keyframes slide-up {
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Fade-out animation for download completion/error flash */
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  .animate-fade-out {
+    animation: fade-out 3s ease-out forwards;
   }
 
   /* View Transitions API support */
