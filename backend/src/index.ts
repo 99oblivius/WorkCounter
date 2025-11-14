@@ -11,10 +11,9 @@ import { csrfProtection, strictCsrfProtection } from './middleware/csrf.js';
 import './types/index.js';
 
 import authRoutes from './routes/auth.js';
+import streamRoutes from './routes/stream.js'; // Unified SSE stream
 import worksRoutes from './routes/works.js';
 import workGroupsRoutes from './routes/workGroups.js';
-import workStreamRoutes from './routes/workStream.js';
-import userStreamRoutes from './routes/userStream.js';
 import timeSessionsRoutes from './routes/timeSessions.js';
 import timelineEntriesRoutes from './routes/timelineEntries.js';
 import statsRoutes from './routes/stats.js';
@@ -27,7 +26,7 @@ import adminUsersRoutes from './routes/admin/users.js';
 import adminSettingsRoutes from './routes/admin/settings.js';
 import adminAuditRoutes from './routes/admin/audit.js';
 import adminRolesRoutes from './routes/admin/roles.js';
-import { sseService } from './services/sseService.js';
+import { unifiedSseService } from './services/unifiedSseService.js';
 
 const app = express();
 
@@ -82,8 +81,8 @@ const redisStore = new RedisStore({
   prefix: 'workcounter:sess:',
 });
 
-// Initialize SSE service for real-time updates
-await sseService.initialize();
+// Initialize unified SSE service for real-time updates (single connection per client)
+await unifiedSseService.initialize();
 
 // Middleware to save original res.end before session wraps it (for tus compatibility)
 app.use((req, res, next) => {
@@ -115,11 +114,9 @@ app.use(csrfProtection);
 
 app.use('/api/auth', authRoutes);
 
-// SSE endpoints for real-time updates
-// User-level SSE for dashboard (works list, running sessions)
-app.use('/api/user', userStreamRoutes);
-// Work-level SSE for work detail page (MUST be registered before /api/works to avoid route conflicts)
-app.use('/api/works', workStreamRoutes);
+// Unified SSE stream (single connection per client)
+// Handles both user-level (dashboard) and work-level (work page) events
+app.use('/api/stream', streamRoutes);
 
 app.use('/api/works', worksRoutes);
 app.use('/api/work-groups', workGroupsRoutes);
@@ -181,14 +178,14 @@ async function startServer() {
 
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
-  await sseService.shutdown();
+  await unifiedSseService.shutdown();
   await pool.end();
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
-  await sseService.shutdown();
+  await unifiedSseService.shutdown();
   await pool.end();
   process.exit(0);
 });

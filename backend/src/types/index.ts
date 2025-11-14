@@ -1,3 +1,9 @@
+/**
+ * Type-safe query parameter array for database operations
+ * Replaces usage of any[] in model files
+ */
+export type QueryParams = (string | number | boolean | Date | null | Buffer | unknown[])[];
+
 export interface User {
   id: number;
   authentik_id?: string | null; // Optional for native auth
