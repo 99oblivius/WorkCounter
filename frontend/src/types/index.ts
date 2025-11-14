@@ -100,3 +100,9 @@ export interface FileStorageRecord {
   created_at: string;
   updated_at: string;
 }
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  cursor: number | null;
+  hasMore: boolean;
+}

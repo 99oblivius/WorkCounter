@@ -25,13 +25,11 @@ export function useUserPermissions() {
       );
       return response.data;
     },
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    staleTime: 5 * 60 * 1000,
     retry: 1,
-    // If user is not logged in, fail silently and use defaults
     retryOnMount: false,
   });
 
-  // Provide defaults if data is not loaded
   const permissions: UserPermissions['permissions'] = data?.permissions || {
     admin: {
       access: false,
@@ -74,8 +72,8 @@ export function useUserPermissions() {
   };
 
   const limits: UserPermissions['limits'] = data?.limits || {
-    maxFileSize: 5368709120, // 5GB default
-    maxImageSize: 52428800, // 50MB default
+    maxFileSize: 5368709120,
+    maxImageSize: 52428800,
     maxNoteImages: 9,
     maxFileSizeFormatted: '5 GB',
     maxImageSizeFormatted: '50 MB',
@@ -88,32 +86,25 @@ export function useUserPermissions() {
     error,
     refetch,
 
-    // Convenience helpers for common checks
     can: {
-      // Files
       uploadFiles: permissions.files.upload,
       bypassFileSizeLimits: permissions.files.bypassSizeLimits,
       deleteOwnFiles: permissions.files.deleteOwn,
 
-      // Attachments
       uploadAttachments: permissions.attachments.upload,
       deleteOwnAttachments: permissions.attachments.deleteOwn,
 
-      // Works
       createWorks: permissions.works.create,
       shareWorks: permissions.works.share,
 
-      // Timeline
       createTimeline: permissions.timeline.create,
       editOwnTimeline: permissions.timeline.editOwn,
       deleteOwnTimeline: permissions.timeline.deleteOwn,
 
-      // Sessions
       createSessions: permissions.sessions.create,
       editOwnSessions: permissions.sessions.editOwn,
       deleteOwnSessions: permissions.sessions.deleteOwn,
 
-      // Admin
       accessAdmin: permissions.admin.access,
     },
   };

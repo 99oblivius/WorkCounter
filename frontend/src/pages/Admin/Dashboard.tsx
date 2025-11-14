@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { adminApi } from '../../services/adminApi';
+import { adminApi } from '../../services/api';
 import { Users, Shield, Settings, Activity } from 'lucide-react';
 
 export default function AdminDashboard() {

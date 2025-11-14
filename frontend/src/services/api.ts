@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Work, WorkGroup, TimeSession, TimelineEntry, User, StatsOverview, FileStorageRecord } from '../types';
+import type { Work, WorkGroup, TimeSession, TimelineEntry, User, StatsOverview, FileStorageRecord, PaginatedResponse } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 export { API_URL };
@@ -10,7 +10,9 @@ const api = axios.create({
   // SECURITY: Add CSRF protection header required by backend
   headers: {
     'X-Requested-With': 'XMLHttpRequest'
-  }
+  },
+  // Default timeout: 2 minutes (can be overridden per request)
+  timeout: 120000
 });
 
 // Global response interceptor for handling authentication errors
@@ -88,7 +90,6 @@ export const workGroupsApi = {
 
 export const sessionsApi = {
   getRunning: () => api.get<TimeSession | null>('/sessions/running'),
-  // FIX BUG 3: Get all running sessions across accessible works (for dashboard)
   getAllRunning: () => api.get<TimeSession[]>('/sessions/running/all'),
   getByWorkId: (workId: number) => api.get<TimeSession[]>(`/sessions/work/${workId}`),
   getById: (id: number) => api.get<TimeSession>(`/sessions/${id}`),
@@ -137,35 +138,34 @@ export const statsApi = {
 };
 
 export const filesApi = {
-  // Get all completed files for a work
   getByWorkId: (workId: number) =>
-    api.get<FileStorageRecord[]>(`/files/work/${workId}`),
+    api.get<PaginatedResponse<FileStorageRecord>>(`/files/work/${workId}`),
 
-  // Get all files including in-progress (for inline progress UI)
   getAllByWorkId: (workId: number) =>
-    api.get<FileStorageRecord[]>(`/files/work/${workId}/all`),
+    api.get<PaginatedResponse<FileStorageRecord>>(`/files/work/${workId}/all`),
 
-  // Get single file metadata
   getById: (fileId: number) =>
     api.get<FileStorageRecord>(`/files/${fileId}`),
 
-  // Download file
-  download: (fileId: number) =>
-    api.get(`/files/${fileId}/download`, { responseType: 'blob' }),
+  download: (fileId: number, config?: { signal?: AbortSignal; timeout?: number }) =>
+    api.get(`/files/${fileId}/download`, {
+      responseType: 'blob',
+      timeout: config?.timeout || 300000,
+      signal: config?.signal,
+      onDownloadProgress: () => {
+        // Silent progress tracking
+      }
+    }),
 
-  // Delete file
   delete: (fileId: number) =>
     api.delete(`/files/${fileId}`),
 
-  // Cancel upload
   cancel: (fileId: number) =>
     api.post(`/files/${fileId}/cancel`),
 
-  // Get download URL
   getDownloadUrl: (fileId: number) =>
     `${API_URL}/api/files/${fileId}/download`,
 
-  // Get tus upload endpoint
   getTusEndpoint: () =>
     `${API_URL}/api/files/upload`,
 };
@@ -175,4 +175,89 @@ export const userSettingsApi = {
   update: (settings: Record<string, string>) => api.patch('/user-settings', settings),
   updateSingle: (key: string, value: string) => api.put(`/user-settings/${key}`, { value }),
   deleteSingle: (key: string) => api.delete(`/user-settings/${key}`),
+};
+
+import type { UserWithRoles, Role, SystemSetting, AuditLog, WorkShare } from '../types/admin';
+
+export const adminApi = {
+  getUsers: async () => (await api.get<UserWithRoles[]>('/admin/users')).data,
+  getUser: async (userId: number) => (await api.get<UserWithRoles>(`/admin/users/${userId}`)).data,
+  createUser: async (username: string, email: string) =>
+    (await api.post<{ id: number; username: string; email: string; temporaryPassword?: string }>(
+      '/admin/users',
+      { username, email }
+    )).data,
+  grantRole: async (userId: number, roleId: number) =>
+    (await api.post(`/admin/users/${userId}/roles/${roleId}`, {})).data,
+  revokeRole: async (userId: number, roleId: number) =>
+    (await api.delete(`/admin/users/${userId}/roles/${roleId}`)).data,
+  deactivateUser: async (userId: number) =>
+    (await api.patch(`/admin/users/${userId}/deactivate`, {})).data,
+  activateUser: async (userId: number) =>
+    (await api.patch(`/admin/users/${userId}/activate`, {})).data,
+  deleteUser: async (userId: number) =>
+    (await api.delete(`/admin/users/${userId}`)).data,
+  resetUserPassword: async (userId: number, newPassword: string) =>
+    (await api.post(`/admin/users/${userId}/reset-password`, { newPassword })).data,
+
+  getRoles: async () => (await api.get<Role[]>('/admin/roles')).data,
+  getPermissions: async () => (await api.get<Record<string, any[]>>('/admin/roles/permissions')).data,
+
+  getSettings: async () => (await api.get<SystemSetting[]>('/admin/settings')).data,
+  getSettingsByCategory: async (category: string) =>
+    (await api.get<Record<string, any>>(`/admin/settings/category/${category}`)).data,
+  updateSetting: async (key: string, value: any) =>
+    (await api.patch(`/admin/settings/${key}`, { value })).data,
+  getSettingHistory: async (settingId: number) =>
+    (await api.get<any[]>(`/admin/settings/${settingId}/history`)).data,
+
+  getAuditLogs: async (filters?: {
+    userId?: number;
+    action?: string;
+    resourceType?: string;
+    status?: string;
+    startDate?: Date;
+    endDate?: Date;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const params = new URLSearchParams();
+    if (filters?.userId) params.append('userId', filters.userId.toString());
+    if (filters?.action) params.append('action', filters.action);
+    if (filters?.resourceType) params.append('resourceType', filters.resourceType);
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.startDate) params.append('startDate', filters.startDate.toISOString());
+    if (filters?.endDate) params.append('endDate', filters.endDate.toISOString());
+    if (filters?.limit) params.append('limit', filters.limit.toString());
+    if (filters?.offset) params.append('offset', filters.offset.toString());
+
+    return (await api.get<AuditLog[]>(`/admin/audit?${params.toString()}`)).data;
+  },
+  getAuditStats: async (days: number = 30) =>
+    (await api.get<any[]>(`/admin/audit/stats?days=${days}`)).data,
+  getUserActivity: async (userId: number, limit: number = 20) =>
+    (await api.get<any[]>(`/admin/audit/user/${userId}?limit=${limit}`)).data,
+};
+
+export const workSharingApi = {
+  getWorkShares: async (workId: number) =>
+    (await api.get<{ shares: WorkShare[] }>(`/work-sharing/${workId}/shares`)).data,
+  shareWork: async (workId: number, usernameOrEmail: string, permissionLevel: 'viewer' | 'editor' | 'manager' = 'viewer') =>
+    (await api.post(`/work-sharing/${workId}/share`, { usernameOrEmail, permissionLevel })).data,
+  unshareWork: async (workId: number, identifier: string) =>
+    (await api.delete(`/work-sharing/${workId}/share/${encodeURIComponent(identifier)}`)).data,
+  leaveSharedWork: async (workId: number) =>
+    (await api.post(`/work-sharing/${workId}/leave`, {})).data,
+  getSharedWithMe: async () =>
+    (await api.get<any[]>('/work-sharing/shared-with-me')).data,
+};
+
+export const settingsApi = {
+  getPublicSettings: async () =>
+    (await api.get<Record<string, any>>('/settings/public')).data,
+};
+
+export const streamApi = {
+  updateContext: (workId: number | null, connectionId: string) =>
+    api.put('/stream/context', { workId, connectionId }),
 };

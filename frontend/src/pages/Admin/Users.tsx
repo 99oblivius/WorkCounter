@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { adminApi } from '../../services/adminApi';
+import { adminApi } from '../../services/api';
 import { Shield, CheckCircle, XCircle, User as UserIcon, UserPlus, X, Trash2, Key } from 'lucide-react';
 import type { UserWithRoles, Role } from '../../types/admin';
 import { usePermissions } from '../../hooks/usePermissions';

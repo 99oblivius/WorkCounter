@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { adminApi } from '../../services/adminApi';
+import { adminApi } from '../../services/api';
 import { Filter } from 'lucide-react';
 import type { AuditLog } from '../../types/admin';
 

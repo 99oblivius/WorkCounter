@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { adminApi } from '../../services/adminApi';
+import { adminApi } from '../../services/api';
 import { Shield, Lock } from 'lucide-react';
 import type { Role, Permission } from '../../types/admin';
 
