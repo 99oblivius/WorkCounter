@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { UserSettingsModel } from '../models/UserSettings.js';
 import { requireAuth } from '../middleware/auth.js';
+import { validateBody } from '../middleware/validateRequest.js';
+import { sendSuccess, sendBadRequest, sendInternalError } from '../utils/apiResponse.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 const router = Router();
 
@@ -20,114 +23,84 @@ const updateSettingsSchema = z.object({
  * GET /api/user-settings
  * Get all settings for the current user
  */
-router.get('/', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.user!.userId;
-    const settings = await UserSettingsModel.getAll(userId);
+router.get('/', requireAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
+  const settings = await UserSettingsModel.getAll(userId);
 
-    // Provide defaults if settings don't exist
-    const defaultSettings = {
-      theme: 'dark',
-      accentColor: '#3b82f6',
-      ...settings
-    };
+  // Provide defaults if settings don't exist
+  const defaultSettings = {
+    theme: 'dark',
+    accentColor: '#3b82f6',
+    ...settings
+  };
 
-    res.json(defaultSettings);
-  } catch (error) {
-    console.error('Error fetching user settings:', error);
-    res.status(500).json({ error: 'Failed to fetch user settings' });
-  }
-});
+  sendSuccess(res, defaultSettings);
+}));
 
 /**
  * PATCH /api/user-settings
  * Update multiple settings at once for the current user
  */
-router.patch('/', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.user!.userId;
+router.patch('/', requireAuth, validateBody(updateSettingsSchema), asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
+  const settings = req.body;
 
-    // Validate input
-    const validationResult = updateSettingsSchema.safeParse(req.body);
-    if (!validationResult.success) {
-      return res.status(400).json({
-        error: 'Invalid settings',
-        details: validationResult.error.errors
-      });
-    }
+  // Update settings in database
+  await UserSettingsModel.setMultiple(userId, settings);
 
-    const settings = validationResult.data;
+  // Return updated settings
+  const updatedSettings = await UserSettingsModel.getAll(userId);
 
-    // Update settings in database
-    await UserSettingsModel.setMultiple(userId, settings);
-
-    // Return updated settings
-    const updatedSettings = await UserSettingsModel.getAll(userId);
-
-    res.json({
-      message: 'Settings updated successfully',
-      settings: updatedSettings
-    });
-  } catch (error) {
-    console.error('Error updating user settings:', error);
-    res.status(500).json({ error: 'Failed to update user settings' });
-  }
-});
+  sendSuccess(res, {
+    message: 'Settings updated successfully',
+    settings: updatedSettings
+  });
+}));
 
 /**
  * PUT /api/user-settings/:key
  * Update a single setting
  */
-router.put('/:key', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.user!.userId;
-    const { key } = req.params;
-    const { value } = req.body;
+router.put('/:key', requireAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
+  const { key } = req.params;
+  const { value } = req.body;
 
-    if (!value) {
-      return res.status(400).json({ error: 'Value is required' });
-    }
-
-    // Validate based on key
-    if (key === 'theme') {
-      const result = themeSchema.safeParse(value);
-      if (!result.success) {
-        return res.status(400).json({ error: 'Invalid theme value. Must be "dark" or "light"' });
-      }
-    } else if (key === 'accentColor') {
-      const result = accentColorSchema.safeParse(value);
-      if (!result.success) {
-        return res.status(400).json({ error: 'Invalid color value. Must be a hex color (e.g., #3b82f6)' });
-      }
-    } else {
-      return res.status(400).json({ error: 'Invalid setting key' });
-    }
-
-    await UserSettingsModel.set(userId, key, value);
-
-    res.json({ message: 'Setting updated successfully' });
-  } catch (error) {
-    console.error('Error updating setting:', error);
-    res.status(500).json({ error: 'Failed to update setting' });
+  if (!value) {
+    return sendBadRequest(res, 'Value is required');
   }
-});
+
+  // Validate based on key
+  if (key === 'theme') {
+    const result = themeSchema.safeParse(value);
+    if (!result.success) {
+      return sendBadRequest(res, 'Invalid theme value. Must be "dark" or "light"');
+    }
+  } else if (key === 'accentColor') {
+    const result = accentColorSchema.safeParse(value);
+    if (!result.success) {
+      return sendBadRequest(res, 'Invalid color value. Must be a hex color (e.g., #3b82f6)');
+    }
+  } else {
+    return sendBadRequest(res, 'Invalid setting key');
+  }
+
+  await UserSettingsModel.set(userId, key, value);
+
+  sendSuccess(res, { message: 'Setting updated successfully' });
+}));
 
 /**
  * DELETE /api/user-settings/:key
  * Delete a single setting (will revert to default)
  */
-router.delete('/:key', requireAuth, async (req, res) => {
-  try {
-    const userId = req.session.user!.userId;
-    const { key } = req.params;
+router.delete('/:key', requireAuth, asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
+  const { key } = req.params;
 
-    await UserSettingsModel.delete(userId, key);
+  await UserSettingsModel.delete(userId, key);
 
-    res.json({ message: 'Setting deleted successfully' });
-  } catch (error) {
-    console.error('Error deleting setting:', error);
-    res.status(500).json({ error: 'Failed to delete setting' });
-  }
-});
+  sendSuccess(res, { message: 'Setting deleted successfully' });
+}));
 
 export default router;

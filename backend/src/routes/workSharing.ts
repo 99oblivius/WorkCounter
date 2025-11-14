@@ -1,15 +1,33 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { requireWorkAccess, requireWorkOwnership } from '../middleware/authorization.js';
 import { requirePermission } from '../middleware/rbac.js';
+import { parseNumericParams } from '../middleware/parseNumericParams.js';
+import { validateBody } from '../middleware/validateRequest.js';
+import { permissionLevelEnum } from '../utils/commonSchemas.js';
 import { WorkAccessService } from '../services/workAccessService.js';
 import { WorkModel } from '../models/Work.js';
 import { AuditService } from '../services/auditService.js';
-import { sseService } from '../services/sseService.js';
+import { unifiedSseService } from '../services/unifiedSseService.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 import { query } from '../config/database.js';
 import type { AuthenticatedRequest } from '../middleware/rbac.js';
+import {
+  sendSuccess,
+  sendBadRequest,
+  sendUnauthorized,
+  sendForbidden,
+  sendInternalError
+} from '../utils/apiResponse.js';
 
 const router = Router();
+
+// Validation schemas
+const shareWorkSchema = z.object({
+  usernameOrEmail: z.string().min(1, 'Username or email is required'),
+  permissionLevel: permissionLevelEnum.optional().default('viewer'),
+});
 
 // SECURITY: Require authentication for all work sharing routes
 router.use(requireAuth);
@@ -18,18 +36,14 @@ router.use(requireAuth);
 // SECURITY: Only owners can see who they've shared with
 router.get(
   '/:workId/shares',
+  parseNumericParams(['workId']),
   requireWorkOwnership,
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      const workId = parseInt(req.params.workId);
-      const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const workId = req.params.workId as unknown as number; // parseNumericParams already converted
+    const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
 
-      res.json({ shares });
-    } catch (error) {
-      console.error('Error getting work shares:', error);
-      res.status(500).json({ error: 'Failed to get work shares' });
-    }
-  }
+    sendSuccess(res, { shares });
+  })
 );
 
 // Share work with user
@@ -38,100 +52,105 @@ router.get(
 // ENHANCEMENT: Accept username or email
 router.post(
   '/:workId/share',
+  parseNumericParams(['workId']),
   requireWorkOwnership,
   requirePermission('works.share'),
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      const workId = parseInt(req.params.workId);
-      const { usernameOrEmail, permissionLevel } = req.body;
+  validateBody(shareWorkSchema),
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const workId = req.params.workId as unknown as number;
+    const { usernameOrEmail, permissionLevel } = req.body;
 
-      if (!usernameOrEmail) {
-        return res.status(400).json({ error: 'Username or email required' });
-      }
-
-      // Validate permission level
-      const validLevels = ['viewer', 'editor', 'manager'];
-      const level = permissionLevel || 'viewer';
-      if (!validLevels.includes(level)) {
-        return res.status(400).json({ error: 'Invalid permission level. Must be: viewer, editor, or manager' });
-      }
-
-      // DEFENSE-IN-DEPTH: Double-check ownership even though middleware verified it
-      const access = await WorkAccessService.checkAccess(req.user!.userId, workId);
-      if (!access.isOwner) {
-        await AuditService.log({
-          userId: req.user!.userId,
-          username: req.user!.username,
-          action: 'work.share_denied',
-          resourceType: 'work',
-          resourceId: workId,
-          details: { reason: 'not_owner', attemptedToShare: usernameOrEmail },
-          status: 'failure',
-          ipAddress: req.ip,
-          userAgent: req.get('user-agent')
-        });
-        return res.status(403).json({ error: 'Only the work owner can share this work' });
-      }
-
-      await WorkAccessService.shareWork(
-        workId,
-        req.user!.userId,
-        usernameOrEmail,
-        req.user!.userId,
-        level
-      );
-
+    const access = await WorkAccessService.checkAccess(req.user!.userId, workId);
+    if (!access.isOwner) {
       await AuditService.log({
         userId: req.user!.userId,
         username: req.user!.username,
-        action: 'work.shared',
+        action: 'work.share_denied',
         resourceType: 'work',
         resourceId: workId,
-        details: { sharedWith: usernameOrEmail, permissionLevel: level },
-        status: 'success',
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent')
-      });
-
-      // Emit SSE event for work-level stream
-      const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
-      await sseService.emitWorkUpdate(workId, 'share:add', { shares });
-
-      // Notify the user who received the share (user-level stream)
-      const userResult = await query<{ id: number }>(
-        'SELECT id FROM users WHERE username = $1 OR email = $1',
-        [usernameOrEmail]
-      );
-      if (userResult.rows.length > 0) {
-        const sharedWithUserId = userResult.rows[0].id;
-        const work = await WorkModel.findByIdWithAccess(workId);
-        if (work) {
-          await sseService.emitUserUpdate(sharedWithUserId, 'work:shared', {
-            ...work,
-            permissionLevel: level,
-          });
-        }
-      }
-
-      res.json({ success: true });
-    } catch (error: any) {
-      console.error('Error sharing work:', error);
-
-      await AuditService.log({
-        userId: req.user!.userId,
-        username: req.user!.username,
-        action: 'work.share_failed',
-        resourceType: 'work',
-        resourceId: parseInt(req.params.workId),
-        details: { error: error.message },
+        details: { reason: 'not_owner', attemptedToShare: usernameOrEmail },
         status: 'failure',
         ipAddress: req.ip,
         userAgent: req.get('user-agent')
       });
-
-      res.status(400).json({ error: error.message || 'Failed to share work' });
+      return sendForbidden(res, 'Only the work owner can share this work');
     }
-  }
+
+    const userResult = await query<{ id: number }>(
+      'SELECT id FROM users WHERE username = $1 OR email = $1',
+      [usernameOrEmail]
+    );
+
+    let isUpdate = false;
+    let previousPermissionLevel: string | null = null;
+    if (userResult.rows.length > 0) {
+      const sharedWithUserId = userResult.rows[0].id;
+      const existingShare = await query<{ permission_level: string }>(
+        'SELECT permission_level FROM work_shares WHERE work_id = $1 AND shared_with_user_id = $2',
+        [workId, sharedWithUserId]
+      );
+      if (existingShare.rows.length > 0) {
+        isUpdate = true;
+        previousPermissionLevel = existingShare.rows[0].permission_level;
+      }
+    }
+
+    await WorkAccessService.shareWork(
+      workId,
+      req.user!.userId,
+      usernameOrEmail,
+      req.user!.userId,
+      permissionLevel
+    );
+
+    await AuditService.log({
+      userId: req.user!.userId,
+      username: req.user!.username,
+      action: isUpdate ? 'work.share_updated' : 'work.shared',
+      resourceType: 'work',
+      resourceId: workId,
+      details: {
+        sharedWith: usernameOrEmail,
+        permissionLevel,
+        ...(isUpdate && { previousPermissionLevel })
+      },
+      status: 'success',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent')
+    });
+
+    const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
+    const eventType = isUpdate ? 'share:update' : 'share:add';
+    await unifiedSseService.emitToWork(workId, eventType, { shares, workId });
+
+    if (userResult.rows.length > 0) {
+      const sharedWithUserId = userResult.rows[0].id;
+
+      if (isUpdate) {
+        await unifiedSseService.emitToUser(sharedWithUserId, 'permissions:updated', {
+          action: 'share_permission_updated',
+          workId,
+          permissionLevel,
+          previousPermissionLevel,
+        });
+      } else {
+        const work = await WorkModel.findByIdWithAccess(workId);
+        if (work) {
+          const ownerResult = await query<{ username: string }>(
+            'SELECT username FROM users WHERE id = $1',
+            [work.user_id]
+          );
+          await unifiedSseService.emitToUser(sharedWithUserId, 'work:shared', {
+            ...work,
+            permissionLevel,
+            ownerUsername: ownerResult.rows[0]?.username,
+          });
+        }
+      }
+    }
+
+    sendSuccess(res, { success: true });
+  })
 );
 
 // Unshare work (remove user access)
@@ -139,133 +158,101 @@ router.post(
 // ENHANCEMENT: Accept username or email in path
 router.delete(
   '/:workId/share/:identifier',
+  parseNumericParams(['workId']),
   requireWorkOwnership,
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      const workId = parseInt(req.params.workId);
-      const { identifier } = req.params;
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const workId = req.params.workId as unknown as number; // parseNumericParams already converted
+    const { identifier } = req.params;
 
-      // DEFENSE-IN-DEPTH: Double-check ownership
-      const access = await WorkAccessService.checkAccess(req.user!.userId, workId);
-      if (!access.isOwner) {
-        await AuditService.log({
-          userId: req.user!.userId,
-          username: req.user!.username,
-          action: 'work.unshare_denied',
-          resourceType: 'work',
-          resourceId: workId,
-          details: { reason: 'not_owner', attemptedToRemove: identifier },
-          status: 'failure',
-          ipAddress: req.ip,
-          userAgent: req.get('user-agent')
-        });
-        return res.status(403).json({ error: 'Only the work owner can unshare this work' });
-      }
-
-      // Get user ID before unsharing (for SSE notification)
-      const userResult = await query<{ id: number }>(
-        'SELECT id FROM users WHERE username = $1 OR email = $1',
-        [identifier]
-      );
-      const unsharedUserId = userResult.rows.length > 0 ? userResult.rows[0].id : null;
-
-      await WorkAccessService.unshareWork(workId, req.user!.userId, identifier);
-
+    // DEFENSE-IN-DEPTH: Double-check ownership
+    const access = await WorkAccessService.checkAccess(req.user!.userId, workId);
+    if (!access.isOwner) {
       await AuditService.log({
         userId: req.user!.userId,
         username: req.user!.username,
-        action: 'work.unshared',
+        action: 'work.unshare_denied',
         resourceType: 'work',
         resourceId: workId,
-        details: { removedUser: identifier },
-        status: 'success',
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent')
-      });
-
-      // Emit SSE event for work-level stream
-      const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
-      await sseService.emitWorkUpdate(workId, 'share:remove', { shares });
-
-      // Notify the user who lost access (user-level stream)
-      if (unsharedUserId) {
-        await sseService.emitUserUpdate(unsharedUserId, 'work:unshared', { workId });
-      }
-
-      res.json({ success: true });
-    } catch (error: any) {
-      console.error('Error unsharing work:', error);
-
-      await AuditService.log({
-        userId: req.user!.userId,
-        username: req.user!.username,
-        action: 'work.unshare_failed',
-        resourceType: 'work',
-        resourceId: parseInt(req.params.workId),
-        details: { error: error.message },
+        details: { reason: 'not_owner', attemptedToRemove: identifier },
         status: 'failure',
         ipAddress: req.ip,
         userAgent: req.get('user-agent')
       });
-
-      res.status(400).json({ error: error.message || 'Failed to unshare work' });
+      return sendForbidden(res, 'Only the work owner can unshare this work');
     }
-  }
+
+    const userResult = await query<{ id: number }>(
+      'SELECT id FROM users WHERE username = $1 OR email = $1',
+      [identifier]
+    );
+    const unsharedUserId = userResult.rows.length > 0 ? userResult.rows[0].id : null;
+
+    await WorkAccessService.unshareWork(workId, req.user!.userId, identifier);
+
+    await AuditService.log({
+      userId: req.user!.userId,
+      username: req.user!.username,
+      action: 'work.unshared',
+      resourceType: 'work',
+      resourceId: workId,
+      details: { removedUser: identifier },
+      status: 'success',
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent')
+    });
+
+    const shares = await WorkAccessService.getWorkShares(workId, req.user!.userId);
+    await unifiedSseService.emitToWork(workId, 'share:remove', { shares, workId });
+
+    if (unsharedUserId) {
+      await unifiedSseService.emitToUser(unsharedUserId, 'work:unshared', { workId });
+    }
+
+    sendSuccess(res, { success: true });
+  })
 );
 
-// Remove work from my shared works (as sharee)
 router.post(
   '/:workId/leave',
+  parseNumericParams(['workId']),
   requireWorkAccess('view'),
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      const workId = parseInt(req.params.workId);
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    const workId = req.params.workId as unknown as number;
 
-      // Verify this is a shared work
-      const access = await WorkAccessService.checkAccess(req.user!.userId, workId);
-      if (access.isOwner) {
-        return res.status(400).json({ error: 'Cannot leave your own work' });
-      }
-
-      await WorkAccessService.removeFromMySharedWorks(workId, req.user!.userId);
-
-      await AuditService.log({
-        userId: req.user!.userId,
-        username: req.user!.username,
-        action: 'work.left_shared',
-        resourceType: 'work',
-        resourceId: workId,
-        ipAddress: req.ip,
-        userAgent: req.get('user-agent')
-      });
-
-      // Notify user via SSE that they've left the work (user-level stream)
-      await sseService.emitUserUpdate(req.user!.userId, 'work:unshared', { workId });
-
-      res.json({ success: true });
-    } catch (error) {
-      console.error('Error leaving shared work:', error);
-      res.status(500).json({ error: 'Failed to leave shared work' });
+    const access = await WorkAccessService.checkAccess(req.user!.userId, workId);
+    if (access.isOwner) {
+      return sendBadRequest(res, 'Cannot leave your own work');
     }
-  }
+
+    await WorkAccessService.removeFromMySharedWorks(workId, req.user!.userId);
+
+    await AuditService.log({
+      userId: req.user!.userId,
+      username: req.user!.username,
+      action: 'work.left_shared',
+      resourceType: 'work',
+      resourceId: workId,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent')
+    });
+
+    // Notify user via SSE that they've left the work (user-level stream)
+    await unifiedSseService.emitToUser(req.user!.userId, 'work:unshared', { workId });
+
+    sendSuccess(res, { success: true });
+  })
 );
 
-// Get all works shared with me
 router.get(
   '/shared-with-me',
-  async (req: AuthenticatedRequest, res) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-
-      const sharedWorks = await WorkAccessService.getSharedWithUser(req.user.userId);
-      res.json(sharedWorks);
-    } catch (error) {
-      console.error('Error getting shared works:', error);
-      res.status(500).json({ error: 'Failed to get shared works' });
+  asyncHandler(async (req: AuthenticatedRequest, res) => {
+    if (!req.user) {
+      return sendUnauthorized(res);
     }
-  }
+
+    const sharedWorks = await WorkAccessService.getSharedWithUser(req.user.userId);
+    sendSuccess(res, sharedWorks);
+  })
 );
 
 export default router;

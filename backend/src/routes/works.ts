@@ -1,21 +1,43 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
-import { requireWorkAccess } from '../middleware/authorization.js';
+import { requireWorkAccess, type WorkAccessRequest } from '../middleware/authorization.js';
+import { parseNumericParams } from '../middleware/parseNumericParams.js';
+import { validateBody, validateQuery } from '../middleware/validateRequest.js';
+import {
+  titleSchema,
+  descriptionSchema,
+  workStatusEnum,
+  searchSchema,
+  statusFilterSchema,
+  cursorPaginationSchema
+} from '../utils/commonSchemas.js';
 import { WorkModel } from '../models/Work.js';
 import { TimelineEntryModel } from '../models/TimelineEntry.js';
 import { FileStorageModel } from '../models/FileStorage.js';
 import { minioService } from '../services/minioService.js';
 import { WorkAccessService } from '../services/workAccessService.js';
-import { sseService } from '../services/sseService.js';
+import { WorkAccessCache } from '../services/cache/workAccessCache.js';
+import { unifiedSseService } from '../services/unifiedSseService.js';
+import { ResourceDeletionService } from '../services/resourceDeletionService.js';
+import { withTransaction } from '../config/database.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
+import {
+  sendSuccess,
+  sendCreated,
+  sendNoContent,
+  sendBadRequest,
+  sendForbidden,
+  sendNotFound
+} from '../utils/apiResponse.js';
 import '../types/index.js';
 
 const router = Router();
 
 // SECURITY: Comprehensive input validation with max lengths
 const createWorkSchema = z.object({
-  title: z.string().min(1).max(255),
-  description: z.string().max(10000).optional(),  // SECURITY FIX: Added max length
+  title: titleSchema,
+  description: descriptionSchema,
   clientName: z.string().max(255).optional(),
   hourlyRate: z.number().positive().max(999999.99).optional(),  // SECURITY FIX: Max value
   tags: z.array(z.string().max(100)).max(20).optional(),  // SECURITY FIX: Max tag length and count
@@ -23,204 +45,135 @@ const createWorkSchema = z.object({
 });
 
 const updateWorkSchema = z.object({
-  title: z.string().min(1).max(255).optional(),
-  description: z.string().max(10000).optional(),  // SECURITY FIX: Added max length
+  title: titleSchema.optional(),
+  description: descriptionSchema,
   clientName: z.string().max(255).optional(),
   hourlyRate: z.number().positive().max(999999.99).optional(),  // SECURITY FIX: Max value
-  status: z.enum(['active', 'archived', 'completed']).optional(),
+  status: workStatusEnum.optional(),
   tags: z.array(z.string().max(100)).max(20).optional(),  // SECURITY FIX: Max tag length and count
   groupId: z.number().int().positive().nullable().optional(),
 });
 
+// Query schema for list endpoint with pagination
+const workListQuerySchema = searchSchema
+  .merge(statusFilterSchema)
+  .merge(cursorPaginationSchema);
+
 router.use(requireAuth);
 
-router.get('/', async (req, res, next) => {
-  try {
-    const userId = req.session.user!.userId;
-    const { status, search } = req.query;
+router.get('/', validateQuery(workListQuerySchema), asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
+  const { status, search, limit, cursor } = req.query as {
+    status?: string;
+    search?: string;
+    limit?: number;
+    cursor?: number;
+  };
 
-    let works;
-    if (search && typeof search === 'string') {
-      works = await WorkModel.search(userId, search);
-    } else {
-      works = await WorkModel.findByUserId(userId, status as string | undefined);
-    }
+  const paginationOptions = {
+    limit: limit || 20,
+    cursor
+  };
 
-    res.json(works);
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.get('/:id', requireWorkAccess('view'), async (req, res, next) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-
-    // Authorization already checked by requireWorkAccess middleware
-    const work = await WorkModel.findByIdWithAccess(id);
-
-    if (!work) {
-      return res.status(404).json({ error: 'Work not found' });
-    }
-
-    res.json(work);
-  } catch (error) {
-    next(error);
-  }
-});
-
-// Get work permissions for current user
-router.get('/:id/permissions', requireWorkAccess('view'), async (req, res, next) => {
-  try {
-    const userId = req.session.user!.userId;
-    const workId = parseInt(req.params.id, 10);
-
-    const permissions = await WorkAccessService.checkAccess(userId, workId);
-
-    res.json({
-      permissionLevel: permissions.permissionLevel,
-      canView: permissions.canView,
-      canCreate: permissions.canCreate,
-      canEditOthers: permissions.canEditOthers,
-      canDeleteOthers: permissions.canDeleteOthers,
-      canEdit: permissions.canEdit,
-      canDelete: permissions.canDelete,
-      isOwner: permissions.isOwner,
-      isShared: permissions.isShared
+  let result;
+  if (search) {
+    result = await WorkModel.searchPaginated(userId, search, paginationOptions);
+  } else {
+    result = await WorkModel.findByUserIdPaginated(userId, {
+      ...paginationOptions,
+      status
     });
-  } catch (error) {
-    next(error);
   }
-});
 
-router.post('/', async (req, res, next) => {
-  try {
-    const userId = req.session.user!.userId;
-    const data = createWorkSchema.parse(req.body);
+  sendSuccess(res, result);
+}));
 
-    const work = await WorkModel.create({
-      userId,
-      ...data,
-    });
+router.get('/:id', parseNumericParams(['id']), requireWorkAccess('view'), asyncHandler(async (req, res) => {
+  const id = req.params.id as unknown as number;
 
-    // Emit SSE event to user's dashboard
-    await sseService.emitUserUpdate(userId, 'work:create', work);
+  const work = await WorkModel.findByIdWithAccess(id);
 
-    res.status(201).json(work);
-  } catch (error) {
-    next(error);
+  if (!work) {
+    return sendNotFound(res, 'Work not found');
   }
-});
 
-router.patch('/:id', requireWorkAccess('edit'), async (req, res, next) => {
-  try {
-    const userId = req.session.user!.userId;
-    const id = parseInt(req.params.id, 10);
-    const data = updateWorkSchema.parse(req.body);
+  sendSuccess(res, work);
+}));
 
-    // Get work access to check if user is owner
-    const workAccess = (req as any).workAccess;
+router.get('/:id/permissions', parseNumericParams(['id']), requireWorkAccess('view'), asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
+  const workId = req.params.id as unknown as number;
 
-    // Only owners can update works (even with edit access, sharees can't modify work metadata)
-    if (!workAccess.isOwner) {
-      return res.status(403).json({ error: 'Only the work owner can update work details' });
-    }
+  const permissions = await WorkAccessService.checkAccess(userId, workId);
 
-    // Convert camelCase to snake_case for database
-    const updateData: any = {};
-    if (data.title !== undefined) updateData.title = data.title;
-    if (data.description !== undefined) updateData.description = data.description;
-    if (data.clientName !== undefined) updateData.client_name = data.clientName;
-    if (data.hourlyRate !== undefined) updateData.hourly_rate = data.hourlyRate;
-    if (data.status !== undefined) updateData.status = data.status;
-    if (data.tags !== undefined) updateData.tags = data.tags;
-    if (data.groupId !== undefined) updateData.group_id = data.groupId;
+  sendSuccess(res, {
+    permissionLevel: permissions.permissionLevel,
+    canView: permissions.canView,
+    canCreate: permissions.canCreate,
+    canEditOthers: permissions.canEditOthers,
+    canDeleteOthers: permissions.canDeleteOthers,
+    canEdit: permissions.canEdit,
+    canDelete: permissions.canDelete,
+    isOwner: permissions.isOwner,
+    isShared: permissions.isShared
+  });
+}));
 
-    const work = await WorkModel.update(id, userId, updateData);
+router.post('/', validateBody(createWorkSchema), asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
 
-    if (!work) {
-      return res.status(404).json({ error: 'Work not found' });
-    }
+  const work = await WorkModel.create({
+    userId,
+    ...req.body,
+  });
 
-    // Emit SSE event for real-time updates (work-level stream)
-    await sseService.emitWorkUpdate(id, 'work:update', work);
+  await unifiedSseService.emitToUser(userId, 'work:create', work);
 
-    // Emit SSE event to owner's dashboard (user-level stream)
-    await sseService.emitUserUpdate(userId, 'work:update', work);
+  sendCreated(res, work);
+}));
 
-    res.json(work);
-  } catch (error) {
-    next(error);
+router.patch('/:id', parseNumericParams(['id']), requireWorkAccess('edit'), validateBody(updateWorkSchema), asyncHandler(async (req: WorkAccessRequest, res) => {
+  const userId = req.session.user!.userId;
+  const id = req.params.id as unknown as number;
+
+  const workAccess = req.workAccess!;
+
+  if (!workAccess.isOwner) {
+    return sendForbidden(res, 'Only the work owner can update work details');
   }
-});
 
-router.delete('/:id', requireWorkAccess('delete'), async (req, res, next) => {
-  try {
-    const userId = req.session.user!.userId;
-    const id = parseInt(req.params.id, 10);
+  const { title, description, clientName, hourlyRate, status, tags, groupId } = req.body;
 
-    console.log(`Deleting work ${id} for user ${userId}`);
+  const updateData: any = {};
+  if (title !== undefined) updateData.title = title;
+  if (description !== undefined) updateData.description = description;
+  if (clientName !== undefined) updateData.client_name = clientName;
+  if (hourlyRate !== undefined) updateData.hourly_rate = hourlyRate;
+  if (status !== undefined) updateData.status = status;
+  if (tags !== undefined) updateData.tags = tags;
+  if (groupId !== undefined) updateData.group_id = groupId;
 
-    // Get all timeline entries for this work to clean up images
-    const entries = await TimelineEntryModel.findByWorkIdWithAccess(id);
-    console.log(`Found ${entries.length} timeline entries for work ${id}`);
+  const work = await WorkModel.update(id, userId, updateData);
 
-    // Collect all image keys from all entries
-    const imageKeys: string[] = [];
-    entries.forEach((entry: { id: number; image_urls?: string[] | null }) => {
-      if (entry.image_urls && entry.image_urls.length > 0) {
-        console.log(`Entry ${entry.id} has ${entry.image_urls.length} images:`, entry.image_urls);
-        imageKeys.push(...entry.image_urls);
-      }
-    });
-
-    console.log(`Total timeline images to delete: ${imageKeys.length}`);
-
-    // Delete all timeline images from MinIO
-    if (imageKeys.length > 0) {
-      console.log(`Starting deletion of ${imageKeys.length} timeline images from MinIO...`);
-      await minioService.deleteFiles(imageKeys);
-      console.log(`Cleaned up ${imageKeys.length} timeline image(s) from deleted work ${id}`);
-    } else {
-      console.log(`No timeline images to clean up for work ${id}`);
-    }
-
-    // Get all file storage files for this work to clean up
-    const files = await FileStorageModel.findForWorkDeletion(id, userId);
-    console.log(`Found ${files.length} file storage files for work ${id}`);
-
-    // Collect storage keys from completed files
-    const fileKeys: string[] = files
-      .filter(f => f.upload_status === 'completed')
-      .map(f => f.storage_key);
-
-    console.log(`Total storage files to delete: ${fileKeys.length}`);
-
-    // Delete all storage files from MinIO
-    if (fileKeys.length > 0) {
-      console.log(`Starting deletion of ${fileKeys.length} storage files from MinIO...`);
-      await minioService.deleteFiles(fileKeys);
-      console.log(`Cleaned up ${fileKeys.length} storage file(s) from deleted work ${id}`);
-    } else {
-      console.log(`No storage files to clean up for work ${id}`);
-    }
-
-    // Delete the work (cascade will delete sessions, timeline entries, and file_storage records)
-    const deleted = await WorkModel.delete(id, userId);
-
-    if (!deleted) {
-      return res.status(404).json({ error: 'Work not found' });
-    }
-
-    // Emit SSE event to owner's dashboard
-    await sseService.emitUserUpdate(userId, 'work:delete', { id });
-
-    console.log(`Work ${id} deleted successfully`);
-    res.status(204).send();
-  } catch (error) {
-    console.error(`Error deleting work ${req.params.id}:`, error);
-    next(error);
+  if (!work) {
+    return sendNotFound(res, 'Work not found');
   }
-});
+
+  WorkAccessCache.invalidateOnSharingChange(id);
+
+  await unifiedSseService.emitToWork(id, 'work:update', work);
+
+  await unifiedSseService.emitToUser(userId, 'work:update', work);
+
+  sendSuccess(res, work);
+}));
+
+router.delete('/:id', parseNumericParams(['id']), requireWorkAccess('delete'), asyncHandler(async (req, res) => {
+  const userId = req.session.user!.userId;
+  const id = parseInt(req.params.id, 10);
+
+  await ResourceDeletionService.deleteWork(id, userId);
+  sendNoContent(res);
+}));
 
 export default router;
