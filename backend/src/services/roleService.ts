@@ -28,7 +28,7 @@ export class RoleService {
     if (cached) return Array.from(cached);
 
     // SECURITY: Acquire lock to prevent concurrent fetches
-    const permissions = await PermissionCache.acquireLock(userId, async () => {
+    const permissions = await PermissionCache.acquirePermissionLock(userId, async () => {
       // Double-check cache inside lock (another request might have populated it)
       const recheck = PermissionCache.get(userId);
       if (recheck) return recheck;

@@ -27,13 +27,24 @@ export class PasswordService {
    * @param password - Plain text password to verify
    * @param hash - Bcrypt hash to compare against
    * @returns Promise<boolean> - True if password matches
+   * @throws Error if verification fails due to invalid hash or other bcrypt errors
    */
   static async verifyPassword(password: string, hash: string): Promise<boolean> {
     try {
       return await bcrypt.compare(password, hash);
     } catch (error) {
-      console.error('Password verification error:', error);
-      return false;
+      // SECURITY: Log authentication failures for monitoring potential attacks
+      console.error('[SECURITY] Password verification failed:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+        // Note: Do NOT log the password or hash for security reasons
+      });
+
+      // Re-throw the error instead of silently returning false
+      // This allows calling code to distinguish between:
+      // - Wrong password (returns false)
+      // - System error (throws exception)
+      throw new Error('Password verification failed: Invalid hash or system error');
     }
   }
 

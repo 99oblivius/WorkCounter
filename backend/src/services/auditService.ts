@@ -106,16 +106,22 @@ export class AuditService {
    * Get action statistics
    */
   static async getStats(days: number = 30) {
+    // Validate input to prevent abuse
+    if (!Number.isInteger(days) || days < 1 || days > 3650) {
+      throw new Error('Days must be an integer between 1 and 3650');
+    }
+
     const result = await query(
       `SELECT
          action,
          COUNT(*) as count,
          COUNT(DISTINCT user_id) as unique_users
        FROM audit_logs
-       WHERE created_at >= NOW() - INTERVAL '${days} days'
+       WHERE created_at >= NOW() - INTERVAL '1 days' * $1
        GROUP BY action
        ORDER BY count DESC
-       LIMIT 20`
+       LIMIT 20`,
+      [days]
     );
 
     return result.rows;

@@ -132,6 +132,39 @@ class MinIOService {
   }
 
   /**
+   * Stream a file from MinIO (for large file downloads)
+   * @param key - Object key (path) in MinIO
+   * @returns Readable stream, content type, and content length
+   */
+  async streamFile(key: string): Promise<{ stream: Readable; contentType: string; contentLength: number }> {
+    await this.initialize();
+
+    try {
+      const response = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        })
+      );
+
+      const stream = response.Body as Readable;
+      const contentType = response.ContentType || 'application/octet-stream';
+      const contentLength = response.ContentLength || 0;
+
+      return { stream, contentType, contentLength };
+    } catch (error: any) {
+      console.error('MinIO stream error:', error);
+      // Check if file not found
+      if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
+        const notFoundError: any = new Error('File not found in storage');
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+      throw new Error('Failed to retrieve file from storage');
+    }
+  }
+
+  /**
    * Generate object key for an image
    * @param userId - User ID
    * @param entryId - Timeline entry ID

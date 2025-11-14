@@ -5,7 +5,7 @@ import type { ServerRequest } from 'srvx';
 import { env } from '../config/env.js';
 import { FileStorageModel } from '../models/FileStorage.js';
 import { FILE_SIZE_LIMITS } from '../config/fileConfig.js';
-import { sseService } from './sseService.js';
+import { unifiedSseService } from './unifiedSseService.js';
 import { WorkAccessService } from './workAccessService.js';
 import crypto from 'crypto';
 
@@ -54,11 +54,8 @@ export const tusServer = new Server({
       const userId = parseInt(metadata.userId as string, 10);
       const workId = parseInt(metadata.workId as string, 10);
 
-      console.log(`[tus] Creating upload: ${metadata.displayName} (${upload.size} bytes)`);
-
       // SECURITY: Check work-specific create permission (Editor+)
       const workAccess = await WorkAccessService.checkAccess(userId, workId);
-      console.log(`[tus] Work access for user ${userId} on work ${workId}:`, JSON.stringify(workAccess));
       if (!workAccess.canCreate) {
         console.error(`[tus] User ${userId} lacks create permission for work ${workId}`);
         throw new Error('Editor or Manager permission required to upload files');
@@ -66,7 +63,6 @@ export const tusServer = new Server({
 
       const existingFile = await FileStorageModel.findByTusId(upload.id);
       if (existingFile) {
-        console.log(`[tus] Upload already exists with ID: ${existingFile.id}`);
         return {
           metadata: {
             fileId: Buffer.from(existingFile.id.toString()).toString('base64'),
@@ -90,8 +86,6 @@ export const tusServer = new Server({
       });
 
       const fileIdBase64 = Buffer.from(file.id.toString()).toString('base64');
-      console.log(`[tus] Created file record ID: ${file.id}, storage key: ${storageKey}`);
-      console.log(`[tus] Returning fileId in metadata: ${file.id} (base64: ${fileIdBase64})`);
 
       // Return fileId in metadata for client to capture immediately
       return {
@@ -112,13 +106,10 @@ export const tusServer = new Server({
 
       await FileStorageModel.complete(fileId);
 
-      console.log(`[tus] Upload completed: ${fileId} - ${upload.metadata!.displayName}`);
-
       // Emit SSE event for real-time updates
       const file = await FileStorageModel.findByIdWithoutUserFilter(fileId);
       if (file) {
-        await sseService.emitWorkUpdate(file.work_id, 'file:upload', file);
-        console.log(`[tus] SSE event emitted for file ${fileId} on work ${file.work_id}`);
+        await unifiedSseService.emitToWork(file.work_id, 'file:upload', file);
       } else {
         console.error(`[tus] Could not find file ${fileId} to emit SSE event`);
       }
@@ -147,11 +138,6 @@ tusServer.on(EVENTS.POST_RECEIVE, async (req: any, res: any, upload: Upload) => 
     }
 
     const progress = Math.round((upload.offset / upload.size) * 100);
-
-    // Log at 25% increments for server-side monitoring
-    if (progress % 25 === 0) {
-      console.log(`[tus] Upload progress: ${progress}% (${upload.offset}/${upload.size} bytes)`);
-    }
 
     // Database progress updates disabled - client-side tracking is faster
     // Uncomment if needed:

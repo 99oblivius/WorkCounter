@@ -1,8 +1,9 @@
-import { query } from '../config/database.js';
+import { query, withTransaction } from '../config/database.js';
+import { WorkAccessCache, type CachedWorkAccess } from './cache/workAccessCache.js';
 
 export type WorkPermissionLevel = 'viewer' | 'editor' | 'manager';
 
-interface WorkAccessInfo {
+export interface WorkAccessInfo {
   permissionLevel: WorkPermissionLevel;
   isOwner: boolean;
   isShared: boolean;
@@ -20,62 +21,73 @@ export class WorkAccessService {
   /**
    * Check work access permissions
    * Real-time updates handled by SSE + React Query cache on frontend
+   * PERFORMANCE: Added caching with 5-second TTL to reduce database load
    */
   static async checkAccess(userId: number, workId: number): Promise<WorkAccessInfo> {
-    // Query database
-    const result = await query<{
-      permission_level: WorkPermissionLevel;
-      is_owner: boolean;
-      can_view: boolean;
-      can_create: boolean;
-      can_edit_others: boolean;
-      can_delete_others: boolean;
-      can_edit: boolean;
-      can_delete: boolean;
-    }>(
-      `SELECT
-        permission_level,
-        is_owner,
-        can_view,
-        can_create,
-        can_edit_others,
-        can_delete_others,
-        can_edit,
-        can_delete
-       FROM work_access
-       WHERE work_id = $1 AND user_id = $2`,
-      [workId, userId]
-    );
-
-    if (result.rows.length === 0) {
-      const access = {
-        permissionLevel: 'viewer' as WorkPermissionLevel,
-        canView: false,
-        canCreate: false,
-        canEditOthers: false,
-        canDeleteOthers: false,
-        isOwner: false,
-        isShared: false,
-        canEdit: false,
-        canDelete: false
-      };
-      return access;
+    const cached = WorkAccessCache.get(userId, workId);
+    if (cached) {
+      return cached;
     }
 
-    const row = result.rows[0];
-    const access = {
-      permissionLevel: row.permission_level,
-      canView: row.can_view,
-      canCreate: row.can_create,
-      canEditOthers: row.can_edit_others,
-      canDeleteOthers: row.can_delete_others,
-      isOwner: row.is_owner,
-      isShared: !row.is_owner,
-      canEdit: row.can_edit,
-      canDelete: row.can_delete
-    };
+    // Fetch from database with mutex lock to prevent race conditions
+    return await WorkAccessCache.acquireWorkAccessLock(userId, workId, async () => {
+      const result = await query<{
+        permission_level: WorkPermissionLevel;
+        is_owner: boolean;
+        can_view: boolean;
+        can_create: boolean;
+        can_edit_others: boolean;
+        can_delete_others: boolean;
+        can_edit: boolean;
+        can_delete: boolean;
+      }>(
+        `SELECT
+          permission_level,
+          is_owner,
+          can_view,
+          can_create,
+          can_edit_others,
+          can_delete_others,
+          can_edit,
+          can_delete
+         FROM work_access
+         WHERE work_id = $1 AND user_id = $2`,
+        [workId, userId]
+      );
 
-    return access;
+      let access: CachedWorkAccess;
+
+      if (result.rows.length === 0) {
+        access = {
+          permissionLevel: 'viewer' as WorkPermissionLevel,
+          canView: false,
+          canCreate: false,
+          canEditOthers: false,
+          canDeleteOthers: false,
+          isOwner: false,
+          isShared: false,
+          canEdit: false,
+          canDelete: false
+        };
+      } else {
+        const row = result.rows[0];
+        access = {
+          permissionLevel: row.permission_level,
+          canView: row.can_view,
+          canCreate: row.can_create,
+          canEditOthers: row.can_edit_others,
+          canDeleteOthers: row.can_delete_others,
+          isOwner: row.is_owner,
+          isShared: !row.is_owner,
+          canEdit: row.can_edit,
+          canDelete: row.can_delete
+        };
+      }
+
+      WorkAccessCache.set(userId, workId, access);
+
+      return access;
+    });
   }
 
   /**
@@ -115,6 +127,7 @@ export class WorkAccessService {
   /**
    * Share work with user at specified permission level
    * ENHANCEMENT: Accept username or email
+   * Wrapped in transaction to prevent race conditions
    */
   static async shareWork(
     workId: number,
@@ -123,79 +136,81 @@ export class WorkAccessService {
     sharedByUserId: number,
     permissionLevel: WorkPermissionLevel = 'viewer'
   ): Promise<void> {
-    // Get user ID from username OR email
-    const userResult = await query<{ id: number; username: string }>(
-      'SELECT id, username FROM users WHERE (username = $1 OR email = $1) AND is_active = true',
-      [sharedWithIdentifier]
-    );
+    await withTransaction(async (client) => {
+      const userResult = await client.query<{ id: number; username: string }>(
+        'SELECT id, username FROM users WHERE (username = $1 OR email = $1) AND is_active = true',
+        [sharedWithIdentifier]
+      );
 
-    if (userResult.rows.length === 0) {
-      throw new Error('User not found or inactive');
-    }
+      if (userResult.rows.length === 0) {
+        throw new Error('User not found or inactive');
+      }
 
-    const sharedWithUserId = userResult.rows[0].id;
-    const sharedWithUsername = userResult.rows[0].username;
+      const sharedWithUserId = userResult.rows[0].id;
 
-    // Verify work ownership
-    const workResult = await query<{ user_id: number }>(
-      'SELECT user_id FROM works WHERE id = $1',
-      [workId]
-    );
+      const workResult = await client.query<{ user_id: number }>(
+        'SELECT user_id FROM works WHERE id = $1',
+        [workId]
+      );
 
-    if (workResult.rows.length === 0) {
-      throw new Error('Work not found');
-    }
+      if (workResult.rows.length === 0) {
+        throw new Error('Work not found');
+      }
 
-    if (workResult.rows[0].user_id !== ownerUserId) {
-      throw new Error('Not authorized to share this work');
-    }
+      if (workResult.rows[0].user_id !== ownerUserId) {
+        throw new Error('Not authorized to share this work');
+      }
 
-    // Share the work with specified permission level
-    // The trigger will automatically set the boolean columns for backwards compatibility
-    await query(
-      `INSERT INTO work_shares (
-        work_id, owner_id, shared_with_user_id, shared_by, permission_level
-      )
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (work_id, shared_with_user_id)
-       DO UPDATE SET
-         permission_level = EXCLUDED.permission_level,
-         shared_by = EXCLUDED.shared_by,
-         shared_at = CURRENT_TIMESTAMP`,
-      [workId, ownerUserId, sharedWithUserId, sharedByUserId, permissionLevel]
-    );
+      await client.query(
+        `INSERT INTO work_shares (
+          work_id, owner_id, shared_with_user_id, shared_by, permission_level
+        )
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (work_id, shared_with_user_id)
+         DO UPDATE SET
+           permission_level = EXCLUDED.permission_level,
+           shared_by = EXCLUDED.shared_by,
+           shared_at = CURRENT_TIMESTAMP`,
+        [workId, ownerUserId, sharedWithUserId, sharedByUserId, permissionLevel]
+      );
+    });
+
+    WorkAccessCache.invalidateOnSharingChange(workId);
   }
 
   /**
    * Unshare work
    * ENHANCEMENT: Accept username or email
+   * Wrapped in transaction to prevent race conditions
    */
   static async unshareWork(
     workId: number,
     ownerUserId: number,
-    sharedWithIdentifier: string // username or email
+    sharedWithIdentifier: string
   ): Promise<void> {
-    // Get user ID from username OR email
-    const userResult = await query<{ id: number }>(
-      'SELECT id FROM users WHERE username = $1 OR email = $1',
-      [sharedWithIdentifier]
-    );
+    await withTransaction(async (client) => {
+      const userResult = await client.query<{ id: number }>(
+        'SELECT id FROM users WHERE username = $1 OR email = $1',
+        [sharedWithIdentifier]
+      );
 
-    if (userResult.rows.length === 0) {
-      throw new Error('User not found');
-    }
+      if (userResult.rows.length === 0) {
+        throw new Error('User not found');
+      }
 
-    const sharedWithUserId = userResult.rows[0].id;
+      const sharedWithUserId = userResult.rows[0].id;
 
-    // Delete share
-    const result = await query(
-      'DELETE FROM work_shares WHERE work_id = $1 AND owner_id = $2 AND shared_with_user_id = $3 RETURNING id',
-      [workId, ownerUserId, sharedWithUserId]
-    );
+      const result = await client.query(
+        'DELETE FROM work_shares WHERE work_id = $1 AND owner_id = $2 AND shared_with_user_id = $3 RETURNING id',
+        [workId, ownerUserId, sharedWithUserId]
+      );
 
-    if (result.rows.length === 0) {
-      throw new Error('Share not found or not authorized');
-    }
+      if (result.rows.length === 0) {
+        throw new Error('Share not found or not authorized');
+      }
+    });
+
+    WorkAccessCache.invalidateOnSharingChange(workId);
   }
 
   /**
@@ -232,7 +247,6 @@ export class WorkAccessService {
     }>(
       `SELECT u.username, u.email, ws.shared_at,
               ws.permission_level,
-              -- Compute legacy canEdit field from permission_level for backwards compatibility
               (ws.permission_level = 'manager') as can_edit
        FROM work_shares ws
        JOIN users u ON ws.shared_with_user_id = u.id
@@ -256,7 +270,11 @@ export class WorkAccessService {
    */
   static async getUsersWithAccess(workId: number): Promise<number[]> {
     const result = await query<{ user_id: number }>(
-      `SELECT user_id FROM work_access WHERE work_id = $1 AND can_view = true`,
+      `SELECT DISTINCT user_id FROM (
+        SELECT user_id FROM works WHERE id = $1
+        UNION
+        SELECT user_id FROM work_access WHERE work_id = $1 AND can_view = true
+      ) AS all_users`,
       [workId]
     );
 

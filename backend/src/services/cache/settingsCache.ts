@@ -1,36 +1,36 @@
 /**
  * Settings Cache
  * Caches system settings with version-based invalidation
+ *
+ * REFACTORED: Now uses AbstractCache base class with additional versioning
  */
 
-interface CachedSetting {
+import { AbstractCache } from './AbstractCache.js';
+
+interface VersionedSetting {
   value: any;
-  timestamp: number;
   version: number;
 }
 
-export class SettingsCache {
-  private static cache = new Map<string, CachedSetting>();
-  private static TTL = 60 * 1000; // 1 minute
-  private static version = 1; // Increment on any setting change
+class SettingsCacheImpl extends AbstractCache<string, VersionedSetting> {
+  private version = 1; // Increment on any setting change
+
+  constructor() {
+    super(60 * 1000); // 1 minute TTL
+  }
 
   /**
    * Get cached setting value
+   * Checks both TTL expiry and version invalidation
    */
-  static get<T>(key: string): T | null {
-    const cached = this.cache.get(key);
+  get<T>(key: string): T | null {
+    const cached = this.getCached(key);
 
     if (!cached) return null;
 
-    // Check version (invalidates all if settings changed)
+    // Check version (invalidates if settings changed globally)
     if (cached.version !== this.version) {
-      this.cache.delete(key);
-      return null;
-    }
-
-    // Check TTL
-    if (Date.now() - cached.timestamp > this.TTL) {
-      this.cache.delete(key);
+      this.invalidateKey(key);
       return null;
     }
 
@@ -38,50 +38,49 @@ export class SettingsCache {
   }
 
   /**
-   * Set cached setting value
+   * Set cached setting value with current version
    */
-  static set<T>(key: string, value: T): void {
-    this.cache.set(key, {
+  set<T>(key: string, value: T): void {
+    this.setCached(key, {
       value,
-      timestamp: Date.now(),
       version: this.version
     });
   }
 
   /**
    * Invalidate all cached settings (when any setting changes)
+   * Uses version bumping for efficient invalidation
    */
-  static invalidateAll(): void {
+  invalidateAll(): void {
     this.version++;
-    this.cache.clear();
+    super.invalidateAll();
   }
 
   /**
    * Invalidate specific setting
    */
-  static invalidateKey(key: string): void {
-    this.cache.delete(key);
+  invalidateKey(key: string): void {
+    super.invalidateKey(key);
   }
 
   /**
-   * Invalidate all settings in a category
+   * Invalidate all settings in a category (e.g., "auth", "smtp")
    */
-  static invalidateCategory(category: string): void {
-    for (const [key] of this.cache) {
-      if (key.startsWith(`${category}.`)) {
-        this.cache.delete(key);
-      }
-    }
+  invalidateCategory(category: string): void {
+    const prefix = `${category}.`;
+    this.invalidateWhere(key => key.startsWith(prefix));
   }
 
   /**
-   * Get cache statistics
+   * Get cache statistics including version info
    */
-  static getStats() {
+  getStats() {
     return {
-      size: this.cache.size,
-      version: this.version,
-      ttl: this.TTL
+      ...super.getStats(),
+      version: this.version
     };
   }
 }
+
+// Singleton instance
+export const SettingsCache = new SettingsCacheImpl();
