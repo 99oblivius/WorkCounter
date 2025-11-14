@@ -32,3 +32,59 @@ export const query = async <T extends pg.QueryResultRow = any>(text: string, par
 };
 
 export const getClient = () => pool.connect();
+
+/**
+ * Execute a callback within a database transaction.
+ * Automatically handles BEGIN, COMMIT, and ROLLBACK.
+ *
+ * @param callback - Function that receives a database client and returns a promise
+ * @returns The result from the callback
+ * @throws Re-throws any error after rolling back the transaction
+ *
+ * @example
+ * const result = await withTransaction(async (client) => {
+ *   await client.query('INSERT INTO users ...', [params]);
+ *   await client.query('INSERT INTO roles ...', [params]);
+ *   return { success: true };
+ * });
+ */
+export async function withTransaction<T>(
+  callback: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await getClient();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Execute a callback with a dedicated database client from the pool.
+ * Does NOT create a transaction - use for read operations or when you need
+ * a dedicated connection without transaction semantics.
+ *
+ * @param callback - Function that receives a database client and returns a promise
+ * @returns The result from the callback
+ *
+ * @example
+ * const result = await withClient(async (client) => {
+ *   return await client.query('SELECT * FROM users WHERE id = $1', [id]);
+ * });
+ */
+export async function withClient<T>(
+  callback: (client: pg.PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await getClient();
+  try {
+    return await callback(client);
+  } finally {
+    client.release();
+  }
+}
